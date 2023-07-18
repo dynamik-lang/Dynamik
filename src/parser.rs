@@ -152,11 +152,10 @@ pub enum BinaryOp {
     Or,
     And,
 }
-fn parser<'a, I>() -> impl Parser<'a, I, Vec<Expr>, extra::Err<Rich<'a, LogosToken<'a>>>>
+pub fn parser<'a, I>() -> impl Parser<'a, I, Vec<Expr>, extra::Err<Rich<'a, LogosToken<'a>>>>
 where
     I: ValueInput<'a, Token = LogosToken<'a>, Span = SimpleSpan>,
 {
-   
     recursive(|expr| {
         let inline = recursive(|e| {
             let val = select! {
@@ -236,27 +235,25 @@ where
                     .allow_trailing()
                     .collect::<Vec<_>>()
                     .delimited_by(just(LogosToken::LParen), just(LogosToken::RParen))
-                    .then(just(LogosToken::Arrow).ignore_then(ident).or_not())
+                    .then(just(LogosToken::Arrow).ignore_then(ident).or_not()),
             )
             .then_ignore(just(LogosToken::LBrace))
             .then(
-                expr
-                    .separated_by(just(LogosToken::Semi).or_not())
+                expr.separated_by(just(LogosToken::Semi).or_not())
                     .collect::<Vec<_>>(),
             )
             .then_ignore(just(LogosToken::RBrace))
             .map(|((name, (params, return_type)), stmts)| {
-                Expr::Function(name.to_string(), params, return_type , stmts)
+                Expr::Function(name.to_string(), params, return_type, stmts)
             });
-        let return_expr = just(LogosToken::KwReturn).ignore_then(inline.clone().or_not()).map(|e| {
-            Expr::Return(Box::new(e))
-        });
+        let return_expr = just(LogosToken::KwReturn)
+            .ignore_then(inline.clone().or_not())
+            .map(|e| Expr::Return(Box::new(e)));
         function.or(return_expr).or(let_expr).or(inline)
     })
     .separated_by(just(LogosToken::Semi).or_not())
     .collect::<Vec<Expr>>()
 }
-
 
 #[test]
 fn test() {
@@ -277,7 +274,7 @@ let hamza(b: i64) -> f64 {
         .map(|(tok, span)| match tok {
             // Turn the `Range<usize>` spans logos gives us into chumsky's `SimpleSpan` via `Into`, because it's easier
             // to work with
-            Ok(tok) => return (tok, span.into()),
+            Ok(tok) => (tok, span.into()),
             Err(()) => (LogosToken::Error, span.into()),
         });
 
@@ -289,7 +286,7 @@ let hamza(b: i64) -> f64 {
     match parser().parse(token_stream).into_result() {
         // If parsing was successful, attempt to evaluate the s-expression
         Ok(o) => {
-            println!("{:#?}", o)
+            println!("{o:#?}");
         }
         // If parsing was unsuccessful, generate a nice user-friendly diagnostic with ariadne. You could also use
         // codespan, or whatever other diagnostic library you care about. You could even just display-print the errors
