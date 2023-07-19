@@ -1,4 +1,7 @@
-use std::fmt::{self, write};
+use std::{
+    fmt::{self, write},
+    ops::Range,
+};
 
 use ariadne::{Color, Label, Report, ReportKind, Source};
 use chumsky::{
@@ -126,7 +129,17 @@ impl<'a> fmt::Display for LogosToken<'a> {
     }
 }
 #[derive(Debug)]
-pub enum Expr {
+pub struct Expr {
+    pub span: Range<usize>,
+    pub inner: ExprKind,
+}
+impl Expr {
+    pub fn new(span: Range<usize>, inner: ExprKind) -> Self {
+        Expr { inner, span }
+    }
+}
+#[derive(Debug)]
+pub enum ExprKind {
     Int(i64),
     Float(f64),
     String(String),
@@ -152,18 +165,20 @@ pub enum BinaryOp {
     Or,
     And,
 }
-pub fn parser<'a, I>() -> impl Parser<'a, I, Vec<Expr>, extra::Err<Rich<'a, LogosToken<'a>>>>
+pub fn parser<'a, I>(
+) -> impl Parser<'a, I, Vec<Expr>, extra::Err<Rich<'a, LogosToken<'a>>>>
 where
     I: ValueInput<'a, Token = LogosToken<'a>, Span = SimpleSpan>,
 {
     recursive(|expr| {
         let inline = recursive(|e| {
             let val = select! {
-                LogosToken::Int(i) => Expr::Int(i.parse().unwrap()),
-                LogosToken::Float(f) => Expr::Float(f.parse().unwrap()),
-                LogosToken::String(s) => Expr::String(s.to_string()),
-                LogosToken::Ident(s) => Expr::Ident(s.to_string())
-            };
+                LogosToken::Int(i) => ExprKind::Int(i.parse().unwrap()),
+                LogosToken::Float(f) => ExprKind::Float(f.parse().unwrap()),
+                LogosToken::String(s) => ExprKind::String(s.to_string()),
+                LogosToken::Ident(s) => ExprKind::Ident(s.to_string())
+            }
+            .map_with_span(|a, span: Span| Expr::new(span.into(), a));
             let op = just(LogosToken::Times)
                 .to(BinaryOp::Mul)
                 .or(just(LogosToken::Slash).to(BinaryOp::Div));
@@ -175,22 +190,37 @@ where
             let call = val.clone().foldl(
                 items
                     .delimited_by(just(LogosToken::LParen), just(LogosToken::RParen))
+                    .map_with_span(|args, span: Span| (args, span))
                     .repeated(),
-                |f, args| Expr::FunctionCall(Box::new(f), args),
+                |f, (args, span)| {
+                    let span = f.span.start..span.end;
+                    Expr::new(span, ExprKind::FunctionCall(Box::new(f), args))
+                },
             );
-            let product = call
-                .clone()
-                .foldl(op.then(val).repeated(), |lhs, (op, rhs)| {
-                    Expr::Binary(Box::new(lhs), op, Box::new(rhs))
-                });
+            let product = call.clone().foldl(
+                op.then(val)
+                    .map_with_span(|a, span: Span| (a, span))
+                    .repeated(),
+                |lhs, ((op, rhs), span)| {
+                    Expr::new(
+                        span.into(),
+                        ExprKind::Binary(Box::new(lhs), op, Box::new(rhs)),
+                    )
+                },
+            );
             let op = just(LogosToken::Plus)
                 .to(BinaryOp::Add)
                 .or(just(LogosToken::Minus).to(BinaryOp::Sub));
-            let sum = product
-                .clone()
-                .foldl(op.then(product).repeated(), |lhs, (op, rhs)| {
-                    Expr::Binary(Box::new(lhs), op, Box::new(rhs))
-                });
+            let sum = product.clone().foldl(
+                op.then(product)
+                    .repeated(),
+                |lhs, (op, rhs)| {
+                    Expr::new(
+                        lhs.span.start..rhs.span.end,
+                        ExprKind::Binary(Box::new(lhs), op, Box::new(rhs)),
+                    )
+                },
+            );
             let op = choice((
                 just(LogosToken::Eqq).to(BinaryOp::Eq),
                 just(LogosToken::Neq).to(BinaryOp::NotEq),
@@ -199,21 +229,30 @@ where
                 just(LogosToken::Geq).to(BinaryOp::GreaterEq),
                 just(LogosToken::Leq).to(BinaryOp::LessEq),
             ));
-            let comp = sum
-                .clone()
-                .foldl(op.then(sum).repeated(), |lhs, (op, rhs)| {
-                    Expr::Binary(Box::new(lhs), op, Box::new(rhs))
-                });
+            let comp = sum.clone().foldl(
+                op.then(sum)
+                .repeated(),
+                |lhs, (op, rhs)| {
+                    Expr::new(
+                        lhs.span.start..rhs.span.end,
+                        ExprKind::Binary(Box::new(lhs), op, Box::new(rhs)),
+                    )
+                },
+            );
             let op = choice((
                 just(LogosToken::Or).to(BinaryOp::Or),
                 just(LogosToken::And).to(BinaryOp::And),
             ));
-            let expr_ = comp
-                .clone()
-                .foldl(op.then(comp).repeated(), |lhs, (op, rhs)| {
-                    Expr::Binary(Box::new(lhs), op, Box::new(rhs))
-                });
-
+            let expr_ = comp.clone().foldl(
+                op.then(comp)
+                .repeated(),
+                |lhs, (op, rhs)| {
+                    Expr::new(
+                        lhs.span.start..rhs.span.end,
+                        ExprKind::Binary(Box::new(lhs), op, Box::new(rhs)),
+                    )
+                },
+            );
             expr_
         });
         let ident = select! {
@@ -224,7 +263,10 @@ where
             .then_ignore(just(LogosToken::Colon))
             .then(ident)
             .then(just(LogosToken::Eq).ignore_then(inline.clone()).or_not())
-            .map(|((ident, ty), rhs)| Expr::Let(ident.to_string(), ty.to_string(), Box::new(rhs)));
+            .map_with_span(|a, span: Span| (a, span))
+            .map(|(((ident, ty), rhs), span)| {
+                Expr::new(span.into(), ExprKind::Let(ident.to_string(), ty.to_string(), Box::new(rhs)))
+            });
         let function = just(LogosToken::KwLet)
             .ignore_then(ident)
             .then(
@@ -243,12 +285,12 @@ where
                     .collect::<Vec<_>>(),
             )
             .then_ignore(just(LogosToken::RBrace))
-            .map(|((name, (params, return_type)), stmts)| {
-                Expr::Function(name.to_string(), params, return_type, stmts)
+            .map_with_span(|((name, (params, return_type)), stmts), span: Span| {
+                Expr::new(span.into(), ExprKind::Function(name.to_string(), params, return_type, stmts))
             });
         let return_expr = just(LogosToken::KwReturn)
             .ignore_then(inline.clone().or_not())
-            .map(|e| Expr::Return(Box::new(e)));
+            .map_with_span(|e, span: Span| Expr::new(span.into(), ExprKind::Return(Box::new(e))));
         function.or(return_expr).or(let_expr).or(inline)
     })
     .separated_by(just(LogosToken::Semi).or_not())
@@ -258,17 +300,7 @@ where
 #[test]
 fn test() {
     const SRC: &str = r#"
-let hamza(b: i64) -> f64 {
-    let 
-        a: i64 = 9
-    print(
-        a,
-        "Hello World"
-    )
-    return 
-        to_f64(a)
-}
-"#;
+1 + 1"#;
     let token_iter = LogosToken::lexer(SRC)
         .spanned()
         .map(|(tok, span)| match tok {
