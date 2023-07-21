@@ -83,13 +83,6 @@ impl Analyzer {
                 self.end_scope();
             }
             ExprKind::Let(name, _, expr) => {
-                if let Some(_) = self.get(name.clone()) {
-                    self.basic_err(
-                        "Cannot create variable that already exists!".into(),
-                        ast.span,
-                    );
-                    return;
-                }
                 self.scopes
                     .last_mut()
                     .unwrap()
