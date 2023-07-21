@@ -6,7 +6,7 @@ use inkwell::types::{BasicType, BasicTypeEnum};
 use inkwell::values::BasicValue;
 use inkwell::{AddressSpace, OptimizationLevel};
 
-use crate::parser::Expr;
+use crate::parser::{Expr, ExprKind};
 
 use super::helper as _;
 
@@ -42,8 +42,8 @@ impl<'ctx> CodeGen<'ctx> {
         self.builder.position_at_end(entry);
 
         for node in ast {
-            match node {
-                Expr::Let(var_name, var_type, var_value) => {
+            match &node.inner {
+                ExprKind::Let(var_name, var_type, var_value) => {
                     self.define_var(var_name, var_type, var_value)
                 }
 

@@ -1,20 +1,17 @@
-use ariadne::{Report, ReportKind, Label, Color, Source};
-use chumsky::{prelude::*, input::Stream};
-use dynamik::parser::*;
+mod analyzer;
+pub mod llvm;
+pub mod parser;
+mod typechecker;
+use std::ops::Range;
+
+use crate::parser::*;
+use chumsky::{input::Stream, prelude::*};
 use logos::Logos;
+use miette::{miette, LabeledSpan};
 
 fn main() {
     const SRC: &str = r#"
-let hamza(b: i64) -> f64 {
-    let
-        a: i64 = 9
-    print(
-        a,
-        "Hello World"
-    )
-    return
-        to_f64(a)
-}
+25()
 "#;
 
     let token_iter = LogosToken::lexer(SRC)
@@ -28,21 +25,24 @@ let hamza(b: i64) -> f64 {
         .spanned::<LogosToken, SimpleSpan>((SRC.len()..SRC.len()).into());
     match parser().parse(token_stream).into_result() {
         Ok(o) => {
-            println!("{o:#?}");
+            let mut analyzer = analyzer::Analyzer::new(o.clone(), SRC);
+            if analyzer.analyze() {
+                let mut checker = typechecker::TypeChecker::new(o, SRC);
+                checker.typecheck();
+            }
         }
         Err(errs) => {
             for err in errs {
-                Report::build(ReportKind::Error, (), err.span().start)
-                    // .with_code(3)
-                    .with_message(err.to_string())
-                    .with_label(
-                        Label::new(err.span().into_range())
-                            .with_message(err.reason().to_string())
-                            .with_color(Color::Red),
+                let span: Range<usize> = (*err.span()).into();
+                let reason = err.reason().to_string();
+                println!(
+                    "{:?}",
+                    miette!(
+                        labels = vec![LabeledSpan::at(span, reason)],
+                        "Parsing error"
                     )
-                    .finish()
-                    .eprint(Source::from(SRC))
-                    .unwrap();
+                    .with_source_code(SRC)
+                );
             }
         }
     };

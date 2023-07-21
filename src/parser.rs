@@ -3,7 +3,6 @@ use std::{
     ops::Range,
 };
 
-use ariadne::{Color, Label, Report, ReportKind, Source};
 use chumsky::{
     input::{Stream, ValueInput},
     prelude::*,
@@ -16,8 +15,12 @@ pub type Span = SimpleSpan<usize>;
 pub enum LogosToken<'a> {
     #[regex(r#"\d+"#, priority = 2)]
     Int(&'a str),
-    #[regex(r#"((\d+(\.\d+)?)|(\.\d+))([Ee](\+|-)?\d+)?"#)]
+    #[regex(r#"((\d+(\.\d+)?)|((\.\d+))|(\.\d+))([Ee](\+|-)?\d+)?"#)]
     Float(&'a str),
+    #[token("true")]
+    True,
+    #[token("false")]
+    False,
     #[token("+")]
     Plus,
     #[token("-")]
@@ -92,6 +95,8 @@ impl<'a> fmt::Display for LogosToken<'a> {
         match self {
             LogosToken::And => write!(f, "&&"),
             LogosToken::Or => write!(f, "||"),
+            LogosToken::True => write!(f, "true"),
+            LogosToken::False => write!(f, "false"),
             LogosToken::Bang => write!(f, "!"),
             LogosToken::String(_) => write!(f, "string"),
             LogosToken::Ident(_) => write!(f, "identifier"),
@@ -128,7 +133,7 @@ impl<'a> fmt::Display for LogosToken<'a> {
         }
     }
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Expr {
     pub span: Range<usize>,
     pub inner: ExprKind,
@@ -138,10 +143,11 @@ impl Expr {
         Expr { inner, span }
     }
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ExprKind {
     Int(i64),
     Float(f64),
+    Bool(bool),
     String(String),
     Ident(String),
     Binary(Box<Expr>, BinaryOp, Box<Expr>),
@@ -176,7 +182,9 @@ where
                 LogosToken::Int(i) => ExprKind::Int(i.parse().unwrap()),
                 LogosToken::Float(f) => ExprKind::Float(f.parse().unwrap()),
                 LogosToken::String(s) => ExprKind::String(s.to_string()),
-                LogosToken::Ident(s) => ExprKind::Ident(s.to_string())
+                LogosToken::Ident(s) => ExprKind::Ident(s.to_string()),
+                LogosToken::True => ExprKind::Bool(true),
+                LogosToken::False => ExprKind::Bool(false),
             }
             .map_with_span(|a, span: Span| Expr::new(span.into(), a));
             let op = just(LogosToken::Times)
@@ -295,48 +303,4 @@ where
     })
     .separated_by(just(LogosToken::Semi).or_not())
     .collect::<Vec<Expr>>()
-}
-
-#[test]
-fn test() {
-    const SRC: &str = r#"
-1 + 1"#;
-    let token_iter = LogosToken::lexer(SRC)
-        .spanned()
-        .map(|(tok, span)| match tok {
-            // Turn the `Range<usize>` spans logos gives us into chumsky's `SimpleSpan` via `Into`, because it's easier
-            // to work with
-            Ok(tok) => (tok, span.into()),
-            Err(()) => (LogosToken::Error, span.into()),
-        });
-
-    // Turn the token iterator into a stream that chumsky can use for things like backtracking
-    let token_stream = Stream::from_iter(token_iter)
-        // Tell chumsky to split the (Token, SimpleSpan) stream into its parts so that it can handle the spans for us
-        // This involves giving chumsky an 'end of input' span: we just use a zero-width span at the end of the string
-        .spanned::<LogosToken, SimpleSpan>((SRC.len()..SRC.len()).into());
-    match parser().parse(token_stream).into_result() {
-        // If parsing was successful, attempt to evaluate the s-expression
-        Ok(o) => {
-            println!("{o:#?}");
-        }
-        // If parsing was unsuccessful, generate a nice user-friendly diagnostic with ariadne. You could also use
-        // codespan, or whatever other diagnostic library you care about. You could even just display-print the errors
-        // with Rust's built-in `Display` trait, but it's a little crude
-        Err(errs) => {
-            for err in errs {
-                Report::build(ReportKind::Error, (), err.span().start)
-                    // .with_code(3)
-                    .with_message(err.to_string())
-                    .with_label(
-                        Label::new(err.span().into_range())
-                            .with_message(err.reason().to_string())
-                            .with_color(Color::Red),
-                    )
-                    .finish()
-                    .eprint(Source::from(SRC))
-                    .unwrap();
-            }
-        }
-    };
 }
