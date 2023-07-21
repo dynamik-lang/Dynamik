@@ -1,21 +1,24 @@
+use inkwell::types::AnyType;
 use inkwell::values::{BasicValue, PointerValue};
 use std::collections::HashMap;
 
-use crate::parser::BinaryOp;
 use crate::parser::Expr;
 use crate::parser::ExprKind;
+use crate::parser::{self, BinaryOp};
 
 use super::code_gen::CodeGen;
 
 impl<'ctx> CodeGen<'ctx> {
-    pub(crate) fn define_var(&self, var_name: &str, var_type: &str, var_value: &Box<Option<Expr>>) {
-        // static mut VAR_MAP: HashMap<String, PointerValue> = HashMap::new();
-
-        let var_type = self.get_number_type(var_type); // don't worry i will handler more types later (stfu)
+    pub(crate) fn define_var(&self, var_name: &str, var_type: &str, var_value: &Option<Expr>) {
+        let var_type = self
+            .get_number_type(var_type)
+            .expect("custom types are not implemented yet"); // don't worry i will handler more types later (stfu)
         let var_alloca = self.builder.build_alloca(var_type, var_name);
 
+        // self.var_map.insert(var_name.to_string(), var_alloca);
+
         if var_value.is_some() {
-            match &var_value.as_ref().as_ref().unwrap().inner {
+            match &var_value.as_ref().unwrap().inner {
                 ExprKind::Int(i) => {
                     if *i < 0 {
                         unimplemented!("negative numbers are not implemented yet");
@@ -47,8 +50,9 @@ impl<'ctx> CodeGen<'ctx> {
                 }
 
                 ExprKind::Binary(a, op, b) => {
-                    todo!()
+                    todo!();
                 }
+
                 _ => unreachable!(),
             }
         }

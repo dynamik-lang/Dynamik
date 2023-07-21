@@ -4,6 +4,8 @@ pub mod parser;
 mod typechecker;
 use std::ops::Range;
 
+use llvm::CodeGen;
+
 use crate::parser::*;
 use chumsky::{input::Stream, prelude::*};
 use logos::Logos;
@@ -11,7 +13,10 @@ use miette::{miette, LabeledSpan};
 
 fn main() {
     const SRC: &str = r#"
-25()
+let func() -> int {
+    let i: int = 4
+    return i
+}
 "#;
 
     let token_iter = LogosToken::lexer(SRC)
@@ -27,8 +32,12 @@ fn main() {
         Ok(o) => {
             let mut analyzer = analyzer::Analyzer::new(o.clone(), SRC);
             if analyzer.analyze() {
-                let mut checker = typechecker::TypeChecker::new(o, SRC);
+                let mut checker = typechecker::TypeChecker::new(o.clone(), SRC);
                 checker.typecheck();
+
+                let context = inkwell::context::Context::create();
+                let mut code_gen = CodeGen::new(&context);
+                code_gen.jit_run(&o);
             }
         }
         Err(errs) => {
