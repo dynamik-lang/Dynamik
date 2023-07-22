@@ -13,10 +13,7 @@ use miette::{miette, LabeledSpan};
 
 fn main() {
     const SRC: &str = r#"
-let func() -> int {
-    let i: int = 4
-    return i
-}
+1 + 4 + 4 - 5 * 10
 "#;
 
     let token_iter = LogosToken::lexer(SRC)
