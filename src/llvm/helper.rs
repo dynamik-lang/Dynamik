@@ -9,13 +9,12 @@ use crate::parser::{self, BinaryOp};
 use super::code_gen::CodeGen;
 
 impl<'ctx> CodeGen<'ctx> {
-    pub(crate) fn define_var(&self, var_name: &str, var_type: &str, var_value: &Option<Expr>) {
-        let var_type = self
-            .get_number_type(var_type)
+    pub(crate) fn define_var(&mut self, var_name: &str, var_type: &str, var_value: &Option<Expr>) {
+        let var_type = Self::get_number_type(self.context, var_type)
             .expect("custom types are not implemented yet"); // don't worry i will handler more types later (stfu)
         let var_alloca = self.builder.build_alloca(var_type, var_name);
 
-        // self.var_map.insert(var_name.to_string(), var_alloca);
+        self.var_map.insert(var_name.to_string(), var_alloca);
 
         if var_value.is_some() {
             match &var_value.as_ref().unwrap().inner {
@@ -49,8 +48,8 @@ impl<'ctx> CodeGen<'ctx> {
                     );
                 }
 
-                ExprKind::Binary(a, op, b) => {
-                    todo!();
+                b @ ExprKind::Binary(..) => {
+                    self.eval(b.clone(), var_alloca);
                 }
 
                 _ => unreachable!(),
