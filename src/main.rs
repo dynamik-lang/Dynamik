@@ -12,8 +12,13 @@ use logos::Logos;
 use miette::{miette, LabeledSpan};
 
 fn main() {
+    // Results in a error lol
     const SRC: &str = r#"
-1 + 4 + 4 - 5 * 10
+let a: float = 6.5;
+if 1 + 6 {
+    let a: int = 9;
+    a + 6.2
+}
 "#;
 
     let token_iter = LogosToken::lexer(SRC)
@@ -30,11 +35,11 @@ fn main() {
             let mut analyzer = analyzer::Analyzer::new(o.clone(), SRC);
             if analyzer.analyze() {
                 let mut checker = typechecker::TypeChecker::new(o.clone(), SRC);
-                checker.typecheck();
-
-                let context = inkwell::context::Context::create();
-                let mut code_gen = CodeGen::new(&context);
-                code_gen.jit_run(&o);
+                if checker.typecheck() {
+                    let context = inkwell::context::Context::create();
+                    let mut code_gen = CodeGen::new(&context);
+                    code_gen.compile_aot(&o);
+                };
             }
         }
         Err(errs) => {

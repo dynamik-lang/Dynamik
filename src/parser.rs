@@ -88,6 +88,8 @@ pub enum LogosToken<'a> {
     KwElse,
     #[token("return")]
     KwReturn,
+    #[token("extern")]
+    KwExtern,
     Error,
 }
 impl<'a> fmt::Display for LogosToken<'a> {
@@ -116,6 +118,7 @@ impl<'a> fmt::Display for LogosToken<'a> {
             LogosToken::RParen => write!(f, ")"),
             LogosToken::Error => write!(f, "unknown character"),
             LogosToken::Plus => write!(f, "+"),
+            LogosToken::KwExtern => write!(f, "extern"),
             LogosToken::Minus => write!(f, "-"),
             LogosToken::Times => write!(f, "*"),
             LogosToken::Slash => write!(f, "/"),
@@ -154,6 +157,8 @@ pub enum ExprKind {
     Let(String, String, Box<Option<Expr>>),
     FunctionCall(Box<Expr>, Vec<Expr>),
     Function(String, Vec<(String, String)>, Option<String>, Vec<Expr>),
+    If(Box<Expr>, Vec<Expr>, Option<Vec<Expr>>), // IF <condition> <block> (else <block>)?
+    ExternFunction(String, Vec<String>, Option<String>),
     Return(Box<Option<Expr>>),
 }
 #[derive(Debug, Clone)]
@@ -171,8 +176,22 @@ pub enum BinaryOp {
     Or,
     And,
 }
-pub fn parser<'a, I>(
-) -> impl Parser<'a, I, Vec<Expr>, extra::Err<Rich<'a, LogosToken<'a>>>>
+impl BinaryOp {
+    pub fn is_comp(self) -> bool {
+        match self {
+            Self::Eq
+            | Self::NotEq
+            | Self::Greater
+            | Self::GreaterEq
+            | Self::Less
+            | Self::LessEq
+            | Self::And
+            | Self::Or => true,
+            _ => false,
+        }
+    }
+}
+pub fn parser<'a, I>() -> impl Parser<'a, I, Vec<Expr>, extra::Err<Rich<'a, LogosToken<'a>>>>
 where
     I: ValueInput<'a, Token = LogosToken<'a>, Span = SimpleSpan>,
 {
@@ -186,7 +205,10 @@ where
                 LogosToken::True => ExprKind::Bool(true),
                 LogosToken::False => ExprKind::Bool(false),
             }
-            .map_with_span(|a, span: Span| Expr::new(span.into(), a));
+            .map_with_span(|a, span: Span| Expr::new(span.into(), a))
+            .or(e
+                .clone()
+                .delimited_by(just(LogosToken::LParen), just(LogosToken::RParen)));
             let op = just(LogosToken::Times)
                 .to(BinaryOp::Mul)
                 .or(just(LogosToken::Slash).to(BinaryOp::Div));
@@ -219,16 +241,14 @@ where
             let op = just(LogosToken::Plus)
                 .to(BinaryOp::Add)
                 .or(just(LogosToken::Minus).to(BinaryOp::Sub));
-            let sum = product.clone().foldl(
-                op.then(product)
-                    .repeated(),
-                |lhs, (op, rhs)| {
+            let sum = product
+                .clone()
+                .foldl(op.then(product).repeated(), |lhs, (op, rhs)| {
                     Expr::new(
                         lhs.span.start..rhs.span.end,
                         ExprKind::Binary(Box::new(lhs), op, Box::new(rhs)),
                     )
-                },
-            );
+                });
             let op = choice((
                 just(LogosToken::Eqq).to(BinaryOp::Eq),
                 just(LogosToken::Neq).to(BinaryOp::NotEq),
@@ -237,31 +257,29 @@ where
                 just(LogosToken::Geq).to(BinaryOp::GreaterEq),
                 just(LogosToken::Leq).to(BinaryOp::LessEq),
             ));
-            let comp = sum.clone().foldl(
-                op.then(sum)
-                .repeated(),
-                |lhs, (op, rhs)| {
+            let comp = sum
+                .clone()
+                .foldl(op.then(sum).repeated(), |lhs, (op, rhs)| {
                     Expr::new(
                         lhs.span.start..rhs.span.end,
                         ExprKind::Binary(Box::new(lhs), op, Box::new(rhs)),
                     )
-                },
-            );
+                });
             let op = choice((
                 just(LogosToken::Or).to(BinaryOp::Or),
                 just(LogosToken::And).to(BinaryOp::And),
             ));
-            let expr_ = comp.clone().foldl(
-                op.then(comp)
-                .repeated(),
-                |lhs, (op, rhs)| {
+            let expr_ = comp
+                .clone()
+                .foldl(op.then(comp).repeated(), |lhs, (op, rhs)| {
                     Expr::new(
                         lhs.span.start..rhs.span.end,
                         ExprKind::Binary(Box::new(lhs), op, Box::new(rhs)),
                     )
-                },
-            );
+                });
             expr_
+                .clone()
+                .or(expr_.delimited_by(just(LogosToken::LParen), just(LogosToken::RParen)))
         });
         let ident = select! {
             LogosToken::Ident(name) => name.to_string()
@@ -273,7 +291,10 @@ where
             .then(just(LogosToken::Eq).ignore_then(inline.clone()).or_not())
             .map_with_span(|a, span: Span| (a, span))
             .map(|(((ident, ty), rhs), span)| {
-                Expr::new(span.into(), ExprKind::Let(ident.to_string(), ty.to_string(), Box::new(rhs)))
+                Expr::new(
+                    span.into(),
+                    ExprKind::Let(ident.to_string(), ty.to_string(), Box::new(rhs)),
+                )
             });
         let function = just(LogosToken::KwLet)
             .ignore_then(ident)
@@ -289,18 +310,64 @@ where
             )
             .then_ignore(just(LogosToken::LBrace))
             .then(
-                expr.separated_by(just(LogosToken::Semi).or_not())
+                expr.clone().repeated()
                     .collect::<Vec<_>>(),
             )
             .then_ignore(just(LogosToken::RBrace))
             .map_with_span(|((name, (params, return_type)), stmts), span: Span| {
-                Expr::new(span.into(), ExprKind::Function(name.to_string(), params, return_type, stmts))
+                Expr::new(
+                    span.into(),
+                    ExprKind::Function(name.to_string(), params, return_type, stmts),
+                )
             });
         let return_expr = just(LogosToken::KwReturn)
             .ignore_then(inline.clone().or_not())
             .map_with_span(|e, span: Span| Expr::new(span.into(), ExprKind::Return(Box::new(e))));
-        function.or(return_expr).or(let_expr).or(inline)
+        let if_expr = just(LogosToken::KwIf)
+            .ignore_then(inline.clone())
+            .then(
+                expr.clone().repeated()
+                    .collect::<Vec<_>>()
+                    .delimited_by(just(LogosToken::LBrace), just(LogosToken::RBrace)),
+            )
+            .then(
+                just(LogosToken::KwElse)
+                    .ignore_then(
+                        expr.clone().repeated()
+                            .collect::<Vec<_>>()
+                            .delimited_by(just(LogosToken::LBrace), just(LogosToken::RBrace)),
+                    )
+                    .or_not(),
+        ).map_with_span(|((condition, body), else_), span: Span| {
+            Expr::new(span.into(), ExprKind::If(Box::new(condition), body, else_))
+        });
+        let extern_fn = just(LogosToken::KwExtern)
+            .ignore_then(just(LogosToken::String("\"C\"")))
+            .ignore_then(just(LogosToken::Ident("fn")))
+            .ignore_then(ident)
+            .then(
+                ident
+                    .clone()
+                    .separated_by(just(LogosToken::Comma))
+                    .allow_trailing()
+                    .collect::<Vec<_>>()
+                    .delimited_by(just(LogosToken::LParen), just(LogosToken::RParen)),
+            )
+            .then(just(LogosToken::Arrow).ignore_then(ident).or_not())
+            .map_with_span(|((name, param_types), return_type), span: Span| {
+                Expr::new(
+                    span.into(),
+                    ExprKind::ExternFunction(name, param_types, return_type),
+                )
+            });
+        function
+            .or(extern_fn)
+            .or(return_expr)
+            .or(let_expr)
+            .or(if_expr)
+            .or(inline)
+            .then_ignore(just(LogosToken::Semi).or_not())
     })
-    .separated_by(just(LogosToken::Semi).or_not())
+    .repeated()
     .collect::<Vec<Expr>>()
 }

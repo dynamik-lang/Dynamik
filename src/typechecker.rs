@@ -4,7 +4,7 @@ use std::{collections::HashMap, ops::Range};
 use crate::parser::{Expr, ExprKind};
 #[derive(Clone, Debug, PartialEq)]
 pub struct FunctionLike {
-    pub parameters: HashMap<String, TypeForm>,
+    pub parameters: Vec<TypeForm>,
     pub return_type: Box<Option<TypeForm>>,
 }
 #[derive(Debug, Clone, PartialEq)]
@@ -32,13 +32,14 @@ impl TypeChecker {
             scopes: vec![HashMap::new()],
         }
     }
-    pub fn typecheck(&mut self) {
+    pub fn typecheck(&mut self) -> bool {
         for node in self.ast.clone() {
             self.check(node);
         }
         for error in &self.errors {
             println!("{:?}", error)
         }
+        self.errors.is_empty()
     }
     fn check(&mut self, node: Expr) -> Option<TypeForm> {
         match node.clone().inner {
@@ -68,11 +69,12 @@ impl TypeChecker {
             ExprKind::Int(_) => Some(TypeForm::Int),
             ExprKind::Function(name, params, ret_type, stmts) => {
                 let mut params_ty: HashMap<String, TypeForm> = HashMap::new();
-
+                let mut params_ty_noname: Vec<TypeForm> = Vec::new();
                 for (name, ty) in params.clone() {
                     let ty = self.get_type(&ty);
                     if let Some(ty) = ty {
-                        params_ty.insert(name, ty);
+                        params_ty.insert(name, ty.clone());
+                        params_ty_noname.push(ty);
                     } else {
                         self.basic_err(
                             "This function doesn't have a valid parameter types.".into(),
@@ -92,7 +94,7 @@ impl TypeChecker {
                     }
                 }
                 let func_sig = FunctionLike {
-                    parameters: params_ty.clone(),
+                    parameters: params_ty_noname,
                     return_type: Box::new(return_type.clone()),
                 };
 
@@ -108,9 +110,11 @@ impl TypeChecker {
                 {
                     self.scopes.last_mut().unwrap().insert(name, ty);
                 }
+                let mut found = false;
                 for (index, node) in stmts.clone().iter().enumerate() {
                     match node.clone().inner {
                         ExprKind::Return(real_ty) => {
+                            found = true;
                             let mut success = true;
                             if let Some(ty_) = *real_ty {
                                 let ty = self.check(ty_.clone());
@@ -119,7 +123,7 @@ impl TypeChecker {
                                     self.basic_err(
                                         format!(
                                             "Expected type {:?} found type {:?}",
-                                            return_type.unwrap_or(TypeForm::Void),
+                                            return_type.clone().unwrap_or(TypeForm::Void),
                                             ty.unwrap_or(TypeForm::Void)
                                         ),
                                         ty_.span,
@@ -145,18 +149,91 @@ impl TypeChecker {
                         }
                     }
                 }
+                if !found && return_type.is_some() {
+                    self.basic_err(
+                        format!(
+                            "Expected function to return {:?}",
+                            return_type.unwrap_or(TypeForm::Void),
+                        ),
+                        node.span,
+                    );
+                }
 
                 self.end_scope();
                 None
             }
-            ExprKind::FunctionCall(f, args) => {
-                for arg in args {
-                    self.check(arg);
+            ExprKind::If(condition, block, else_block) => {
+                let ty = self.check(*condition.clone());
+                if ty != Some(TypeForm::Bool) {
+                    self.basic_err("Expected condition to be boolean".into(), condition.span)
                 }
+                self.start_scope();
+                for e in block {
+                    self.check(e);
+                }
+                self.end_scope();
+                if let Some(block) = else_block {
+                    self.start_scope();
+                    for e in block {
+                        self.check(e);
+                    }
+                    self.end_scope();
+                }
+                None
+            }
+            ExprKind::ExternFunction(name, types, ret_type) => {
+                let mut tys: Vec<TypeForm> = Vec::new();
+                let mut fails = false;
+                for t in types {
+                    let ty = self.get_type(&t);
+                    if let Some(ty) = ty {
+                        tys.push(ty);
+                    } else {
+                        fails = true;
+                    }
+                }
+                let mut return_type: Option<TypeForm> = None;
+                if let Some(ret) = ret_type {
+                    if let Some(ret_ty) = self.get_type(&ret) {
+                        return_type = Some(ret_ty)
+                    } else {
+                        self.basic_err(
+                            "Function has an invalid return type in the function signature.".into(),
+                            node.span.clone(),
+                        )
+                    }
+                }
+                if fails {
+                    self.basic_err("Invalid function parameters.".into(), node.span.clone())
+                }
+                self.scopes.last_mut().unwrap().insert(
+                    name,
+                    TypeForm::Function(FunctionLike {
+                        parameters: tys,
+                        return_type: Box::new(return_type),
+                    }),
+                );
+                None
+            }
+            ExprKind::FunctionCall(f, args) => {
                 if let ExprKind::Ident(ident) = &f.as_ref().inner {
                     match self.get(ident.to_owned()) {
                         Some(v) => {
                             if let TypeForm::Function(f) = v {
+                                for (index, arg) in args.iter().enumerate() {
+                                    let ty = self.check(arg.clone());
+                                    let actual_type = f.parameters[index].clone();
+                                    if ty != Some(actual_type.clone()) {
+                                        self.basic_err(
+                                            format!(
+                                                "Expected argument as type {:?} found {:?}",
+                                                actual_type,
+                                                ty.unwrap_or(TypeForm::Void)
+                                            ),
+                                            arg.span.clone(),
+                                        )
+                                    }
+                                }
                                 return *f.return_type;
                             }
                             unreachable!()
@@ -168,7 +245,7 @@ impl TypeChecker {
                 }
             }
             ExprKind::Ident(name) => return self.get(name),
-            ExprKind::Binary(lhs, _, rhs) => {
+            ExprKind::Binary(lhs, op, rhs) => {
                 let lhs_ty = self.check(*lhs.clone());
                 let rhs_ty = self.check(*rhs.clone());
                 if lhs_ty != rhs_ty {
@@ -197,7 +274,11 @@ impl TypeChecker {
                     );
                     return None;
                 }
-                return lhs_ty;
+                if op.is_comp() {
+                    Some(TypeForm::Bool)
+                } else {
+                    lhs_ty
+                }
             }
             _ => return None,
         }

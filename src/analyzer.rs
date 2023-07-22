@@ -37,13 +37,33 @@ impl Analyzer {
     fn check(&mut self, ast: Expr) {
         match ast.inner {
             ExprKind::Ident(ident) => {
-                println!("{:?}", self.scopes);
                 if self.get(ident.clone()).is_none() {
                     self.basic_err(
                         format!("variable {} is not found in the current scope", ident),
                         ast.span,
                     );
                 }
+            }
+            ExprKind::If(condition, block, else_block) => {
+                self.check(*condition);
+                self.start_scope();
+                for e in block {
+                    self.check(e);
+                }
+                self.end_scope();
+                if let Some(block) = else_block {
+                    self.start_scope();
+                    for e in block {
+                        self.check(e)
+                    }
+                    self.end_scope();
+                }
+            }
+            ExprKind::ExternFunction(name, params, _) => {
+                self.scopes
+                    .last_mut()
+                    .unwrap()
+                    .insert(name, ScopeVal::Function(params.len()));
             }
             ExprKind::FunctionCall(callee, params) => match callee.inner {
                 ExprKind::Ident(name) => {

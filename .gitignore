@@ -13,7 +13,7 @@ Cargo.lock
 # MSVC Windows builds of rustc generate these, which store debugging information
 *.pdb
 
-
+*.o
 # Added by cargo
 
 /target
@@ -24,3 +24,6 @@ Cargo.lock
 # already existing elements were commented out
 
 #/target
+
+# Compiler's outputs
+*.o

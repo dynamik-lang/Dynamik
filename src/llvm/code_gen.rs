@@ -1,10 +1,12 @@
 use std::collections::HashMap;
+use std::path::Path;
 
 use inkwell::basic_block::BasicBlock;
 use inkwell::builder::Builder;
 use inkwell::context::Context;
 use inkwell::execution_engine::ExecutionEngine;
 use inkwell::module::Module;
+use inkwell::targets::{InitializationConfig, TargetMachine, Target, RelocMode, CodeModel, FileType};
 use inkwell::types::{BasicType, BasicTypeEnum};
 use inkwell::values::{BasicValue, FloatValue, FunctionValue, IntValue, PointerValue};
 use inkwell::{AddressSpace, OptimizationLevel};
@@ -67,7 +69,6 @@ impl<'ctx> CodeGen<'ctx> {
                 }
 
                 ExprKind::Function(name, args, return_type, inner) => {
-                    let num_parms = args.len();
                     let parameters_names = args
                         .iter()
                         .map(|(name, _)| name.clone())
@@ -134,13 +135,26 @@ impl<'ctx> CodeGen<'ctx> {
         }
     }
 
-    pub fn jit_run(&mut self, ast: &[Expr]) {
+    pub fn compile_aot(&mut self, ast: &[Expr]) {
         let mut var_map = HashMap::new();
         self.process(ast, &mut var_map);
+        
+        self.builder.build_return(Some(&self.context.i32_type().const_int(0, false)));
         self.module.print_to_stderr();
+        // Compiling it into a .o file
+        Target::initialize_native(&InitializationConfig::default()).expect("Failed to initialize native target");
+        let triple = TargetMachine::get_default_triple();
+        let target = Target::from_triple(&triple).unwrap();
+        let target_machine = target.create_target_machine(
+            &triple,
+            "generic", // cpu
+            "", // features
+            OptimizationLevel::None,
+            RelocMode::PIC,
+            CodeModel::Default,  
+          ).unwrap();
+          target_machine.write_to_file(&self.module, FileType::Object, Path::new("./output.o")).unwrap();
     }
-
-    // pub fn compile(&self) {}
 
     pub(crate) fn get_number_type(
         context: &'ctx Context,
@@ -343,7 +357,7 @@ impl<'ctx> CodeGen<'ctx> {
                 self.builder.build_store(ptr, res);
             }
 
-            _ => unreachable!("Hamza not doing his work"),
+            _ => unreachable!("sussy baka"),
         }
     }
 
