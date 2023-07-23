@@ -1,13 +1,13 @@
 use std::{
-    fmt::{self, write},
+    fmt::{self},
     ops::Range,
 };
 
 use chumsky::{
-    input::{Stream, ValueInput},
+    input::{ValueInput},
     prelude::*,
 };
-use logos::{Lexer, Logos};
+use logos::{Logos};
 
 pub type Span = SimpleSpan<usize>;
 #[derive(Logos, Debug, Clone, PartialEq)]

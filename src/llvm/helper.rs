@@ -1,10 +1,10 @@
-use inkwell::types::AnyType;
-use inkwell::values::{BasicValue, PointerValue};
-use std::collections::HashMap;
+
+use inkwell::values::{BasicValue};
+
 
 use crate::parser::Expr;
 use crate::parser::ExprKind;
-use crate::parser::{self, BinaryOp};
+
 
 use super::code_gen::CodeGen;
 

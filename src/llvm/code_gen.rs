@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::path::Path;
+
 use std::str::FromStr;
 
 use inkwell::basic_block::BasicBlock;
@@ -7,16 +7,14 @@ use inkwell::builder::Builder;
 use inkwell::context::Context;
 use inkwell::execution_engine::ExecutionEngine;
 use inkwell::module::Module;
-use inkwell::targets::{
-    CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetMachine,
-};
+
 use inkwell::types::{BasicType, BasicTypeEnum};
 use inkwell::values::{BasicValue, FloatValue, FunctionValue, IntValue, PointerValue};
-use inkwell::{AddressSpace, OptimizationLevel};
+use inkwell::{OptimizationLevel};
 
 use crate::parser::{BinaryOp, Expr, ExprKind};
 
-use super::helper as _;
+
 
 pub struct CodeGen<'ctx> {
     pub(crate) context: &'ctx Context,
@@ -79,7 +77,7 @@ impl<'ctx> CodeGen<'ctx> {
                                     VarType::Int => i64_t.into(),
                                     VarType::Float => i64_t.into(),
 
-                                    _ => unreachable!(),
+                                    // _ => unreachable!(),
                                 }
                             } else {
                                 unimplemented!("custom types are not implemented")
@@ -96,7 +94,7 @@ impl<'ctx> CodeGen<'ctx> {
                                 VarType::Int => i64_t.fn_type(&parameters, false),
                                 VarType::Float => f64_t.fn_type(&parameters, false),
 
-                                _ => unreachable!(),
+                                // _ => unreachable!(),
                             };
                         } else {
                             unimplemented!("custom types are not implemented")
@@ -132,7 +130,7 @@ impl<'ctx> CodeGen<'ctx> {
                             VarType::Int => i64_t,
                             VarType::Float => f64_t,
 
-                            _ => unreachable!()
+                            // _ => unreachable!()
                         };
 
                         let ret_value = self.builder.build_alloca(ty, "");
@@ -143,7 +141,7 @@ impl<'ctx> CodeGen<'ctx> {
                         self.builder.build_return(Some(&ret_value));
                     }
 
-                    ExprKind::Int(i) => {}
+                    ExprKind::Int(_i) => {}
 
                     _ => unreachable!(),
                 },
