@@ -12,9 +12,12 @@ use logos::Logos;
 use miette::{miette, LabeledSpan};
 
 fn main() {
-    // Results in a error lol
     const SRC: &str = r#"
-let a: bool = false;
+let f(a: int, b: int) -> int {
+    return a + b;
+}
+
+// f(1, 2);
 "#;
 
     let token_iter = LogosToken::lexer(SRC)
@@ -34,6 +37,7 @@ let a: bool = false;
                 if checker.typecheck() {
                     let context = inkwell::context::Context::create();
                     let mut code_gen = CodeGen::new(&context);
+                    println!("{o:#?}");
                     code_gen.jit_run(&o);
                 };
             }

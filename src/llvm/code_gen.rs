@@ -8,7 +8,7 @@ use inkwell::context::Context;
 use inkwell::execution_engine::ExecutionEngine;
 use inkwell::module::Module;
 
-use inkwell::types::{BasicType, BasicTypeEnum};
+use inkwell::types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum};
 use inkwell::values::{BasicValue, FloatValue, FunctionValue, IntValue, PointerValue};
 use inkwell::OptimizationLevel;
 
@@ -19,7 +19,6 @@ pub struct CodeGen<'ctx> {
     pub(crate) module: Module<'ctx>,
     pub(crate) builder: Builder<'ctx>,
     pub(crate) execution_engine: ExecutionEngine<'ctx>,
-    pub(crate) var_map: HashMap<String, (PointerValue<'ctx>, BasicTypeEnum<'ctx>)>,
     pub(crate) fn_map: HashMap<String, (FunctionValue<'ctx>, BasicBlock<'ctx>)>,
 }
 
@@ -45,12 +44,15 @@ impl<'ctx> CodeGen<'ctx> {
             module,
             builder,
             execution_engine,
-            var_map: HashMap::new(),
             fn_map,
         }
     }
 
-    fn process(&mut self, ast: &[Expr], var_map: &mut HashMap<String, PointerValue<'ctx>>) {
+    fn process(
+        &mut self,
+        ast: &[Expr],
+        var_map: &mut HashMap<String, (PointerValue<'ctx>, BasicTypeEnum<'ctx>)>,
+    ) {
         let i64_t = self.context.i64_type().as_basic_type_enum();
         let f64_t = self.context.f64_type().as_basic_type_enum();
         let bool_t = self.context.bool_type().as_basic_type_enum();
@@ -58,7 +60,7 @@ impl<'ctx> CodeGen<'ctx> {
         for node in ast {
             match &node.inner {
                 ExprKind::Let(var_name, var_type, var_value) => {
-                    self.define_var(var_name, var_type, var_value);
+                    self.define_var(var_name, var_type, var_value, var_map);
                 }
 
                 ExprKind::Function(name, args, return_type, inner) => {
@@ -68,6 +70,22 @@ impl<'ctx> CodeGen<'ctx> {
                         .collect::<Vec<_>>();
 
                     let parameters = args.iter().map(|(_name, i)| i.clone()).collect::<Vec<_>>();
+                    let parameter_types = parameters
+                        .into_iter()
+                        .map(|i| {
+                            if let Ok(ty) = VarType::from_str(&i) {
+                                match ty {
+                                    VarType::Int => i64_t.as_basic_type_enum(),
+                                    VarType::Float => i64_t.as_basic_type_enum(),
+                                    VarType::Bool => bool_t.as_basic_type_enum(),
+                                    // _ => unreachable!(),
+                                }
+                            } else {
+                                unimplemented!("custom types are not implemented")
+                            }
+                        })
+                        .collect::<Vec<_>>();
+
                     let parameters = parameters
                         .into_iter()
                         .map(|i| {
@@ -110,10 +128,14 @@ impl<'ctx> CodeGen<'ctx> {
 
                     let mut var_map_new = var_map.clone();
 
+                    // make function parameters usable inside the function
                     parameters_names.iter().enumerate().for_each(|(i, name)| {
                         var_map_new.insert(
                             name.to_string(),
-                            function.get_nth_param(i as _).unwrap().into_pointer_value(),
+                            (
+                                function.get_nth_param(i as _).unwrap().into_pointer_value(),
+                                *parameter_types.get(i).unwrap(),
+                            ),
                         );
                     });
 
@@ -153,6 +175,14 @@ impl<'ctx> CodeGen<'ctx> {
                         self.builder
                             .build_return(Some(&self.create_bool(*b).as_basic_value_enum()));
                     }
+
+                    ExprKind::Ident(i) => {
+                        let (ident, ident_type) = var_map.get(i).unwrap();
+                        let ident = self.builder.build_load(*ident_type, *ident, "");
+
+                        self.builder.build_return(Some(&ident));
+                    }
+
                     _ => unreachable!(),
                 },
 
@@ -577,6 +607,18 @@ impl From<&ExprKind> for VarType {
             // bool arithmetic isn't possible
             // therefore, no need to handle bool here
             _ => unreachable!("Hamza not doing his work"),
+        }
+    }
+}
+
+impl<'a> From<BasicTypeEnum<'a>> for VarType {
+    fn from(value: BasicTypeEnum<'a>) -> Self {
+        match value {
+            BasicTypeEnum::IntType(i) if i.get_bit_width() != 1 => Self::Int,
+            BasicTypeEnum::IntType(..) => Self::Bool,
+            BasicTypeEnum::FloatType(..) => Self::Float,
+
+            _ => panic!("unknown type type"),
         }
     }
 }
