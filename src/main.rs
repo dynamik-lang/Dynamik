@@ -13,11 +13,16 @@ use miette::{miette, LabeledSpan};
 
 fn main() {
     const SRC: &str = r#"
-let f(a: int, b: int) -> int {
+let add(a: int, b: int) -> int {
     return a + b;
 }
 
-// f(1, 2);
+let v1: int = 5;
+let v2: int = 64;
+
+let sum: int = add(v1, v2);
+
+printf("sum: %lld", sum);
 "#;
 
     let token_iter = LogosToken::lexer(SRC)
@@ -37,7 +42,6 @@ let f(a: int, b: int) -> int {
                 if checker.typecheck() {
                     let context = inkwell::context::Context::create();
                     let mut code_gen = CodeGen::new(&context);
-                    println!("{o:#?}");
                     code_gen.jit_run(&o);
                 };
             }

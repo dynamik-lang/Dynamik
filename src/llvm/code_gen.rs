@@ -10,7 +10,7 @@ use inkwell::module::Module;
 
 use inkwell::types::{BasicType, BasicTypeEnum};
 use inkwell::values::{BasicValue, FloatValue, FunctionValue, IntValue, PointerValue};
-use inkwell::OptimizationLevel;
+use inkwell::{AddressSpace, OptimizationLevel};
 
 use crate::parser::{BinaryOp, Expr, ExprKind};
 
@@ -19,7 +19,7 @@ pub struct CodeGen<'ctx> {
     pub(crate) module: Module<'ctx>,
     pub(crate) builder: Builder<'ctx>,
     pub(crate) execution_engine: ExecutionEngine<'ctx>,
-    pub(crate) fn_map: HashMap<String, (FunctionValue<'ctx>, BasicBlock<'ctx>)>,
+    pub(crate) fn_map: HashMap<String, (FunctionValue<'ctx>, Option<BasicBlock<'ctx>>)>,
 }
 
 impl<'ctx> CodeGen<'ctx> {
@@ -37,7 +37,25 @@ impl<'ctx> CodeGen<'ctx> {
         builder.position_at_end(entry);
 
         let mut fn_map = HashMap::new();
-        fn_map.insert("__main__".to_string(), (main_fn, entry));
+        fn_map.insert("__main__".to_string(), (main_fn, Some(entry)));
+
+        // will be removed in the future
+        ///////
+        let printf_fn_type = context.i32_type().fn_type(
+            &[inkwell::types::BasicMetadataTypeEnum::PointerType(
+                context.i8_type().ptr_type(AddressSpace::default()),
+            )],
+            true,
+        );
+
+        let printf_fn = module.add_function(
+            "printf",
+            printf_fn_type,
+            Some(inkwell::module::Linkage::External),
+        );
+
+        fn_map.insert("printf".to_string(), (printf_fn, None));
+        ///////
 
         Self {
             context,
@@ -73,7 +91,7 @@ impl<'ctx> CodeGen<'ctx> {
                     let parameter_types = parameters
                         .iter()
                         .map(|i| {
-                            if let Ok(ty) = VarType::from_str(&i) {
+                            if let Ok(ty) = VarType::from_str(i) {
                                 match ty {
                                     VarType::Int => i64_t.as_basic_type_enum(),
                                     VarType::Float => i64_t.as_basic_type_enum(),
@@ -124,7 +142,8 @@ impl<'ctx> CodeGen<'ctx> {
                     let entry = self.context.append_basic_block(function, "entry");
 
                     self.builder.position_at_end(entry);
-                    self.fn_map.insert(name.to_string(), (function, entry));
+                    self.fn_map
+                        .insert(name.to_string(), (function, Some(entry)));
 
                     let mut var_map_new = var_map.clone();
 
@@ -147,7 +166,7 @@ impl<'ctx> CodeGen<'ctx> {
                     self.process(inner, &mut var_map_new);
 
                     self.builder
-                        .position_at_end(self.fn_map.get("__main__").unwrap().1);
+                        .position_at_end(self.fn_map.get("__main__").unwrap().1.unwrap());
                 }
 
                 ExprKind::Return(r) => match &r.as_ref().as_ref().unwrap().inner {
@@ -191,6 +210,14 @@ impl<'ctx> CodeGen<'ctx> {
                     _ => unreachable!(),
                 },
 
+                ExprKind::FunctionCall(function_name, args) => {
+                    let ExprKind::Ident(ref function_name) = function_name.as_ref().inner else {
+                        panic!("function name is not a string");
+                    };
+
+                    let _ = self.call_function(function_name, args, var_map);
+                }
+
                 _ => {}
             }
         }
@@ -200,11 +227,12 @@ impl<'ctx> CodeGen<'ctx> {
         let mut var_map = HashMap::new();
         self.process(ast, &mut var_map);
 
-        self.builder.position_at_end(self.fn_map["__main__"].1);
+        self.builder
+            .position_at_end(self.fn_map["__main__"].1.unwrap());
         self.builder
             .build_return(Some(&self.context.i32_type().const_int(0, false)));
 
-        self.module.print_to_stderr();
+        // self.module.print_to_stderr();
 
         unsafe {
             self.execution_engine
@@ -599,7 +627,7 @@ impl FromStr for VarType {
 }
 
 impl<'ctx> VarType {
-    fn create(
+    pub(crate) fn create(
         value: &ExprKind,
         var_map: &mut HashMap<String, (PointerValue<'ctx>, BasicTypeEnum<'ctx>)>,
     ) -> Self {
@@ -613,7 +641,7 @@ impl<'ctx> VarType {
         match (lhs, rhs) {
             (Int(_), _) | (_, Int(_)) => Self::Int,
             (Float(_), _) | (_, Float(_)) => Self::Float,
-            (Ident(i), _) | (_, Ident(i)) => VarType::from(var_map.get(i).unwrap().1),
+            (Ident(i), _) | (_, Ident(i)) => Self::from(var_map.get(i).unwrap().1),
             (b @ Binary(..), _) | (_, b @ Binary(..)) => Self::create(b, var_map),
 
             // bool arithmetic isn't possible
