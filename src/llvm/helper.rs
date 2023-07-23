@@ -44,7 +44,7 @@ impl<'ctx> CodeGen<'ctx> {
                 }
 
                 b @ ExprKind::Binary(..) => {
-                    self.eval(b, var_alloca);
+                    self.eval(b, var_alloca, var_map);
                 }
 
                 ExprKind::Ident(ident) => {

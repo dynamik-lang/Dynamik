@@ -8,7 +8,7 @@ use inkwell::context::Context;
 use inkwell::execution_engine::ExecutionEngine;
 use inkwell::module::Module;
 
-use inkwell::types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum};
+use inkwell::types::{BasicType, BasicTypeEnum};
 use inkwell::values::{BasicValue, FloatValue, FunctionValue, IntValue, PointerValue};
 use inkwell::OptimizationLevel;
 
@@ -71,7 +71,7 @@ impl<'ctx> CodeGen<'ctx> {
 
                     let parameters = args.iter().map(|(_name, i)| i.clone()).collect::<Vec<_>>();
                     let parameter_types = parameters
-                        .into_iter()
+                        .iter()
                         .map(|i| {
                             if let Ok(ty) = VarType::from_str(&i) {
                                 match ty {
@@ -133,7 +133,12 @@ impl<'ctx> CodeGen<'ctx> {
                         var_map_new.insert(
                             name.to_string(),
                             (
-                                function.get_nth_param(i as _).unwrap().into_pointer_value(),
+                                {
+                                    let param = function.get_nth_param(i as _).unwrap();
+                                    let param_ptr = self.builder.build_alloca(param.get_type(), "");
+                                    self.builder.build_store(param_ptr, param);
+                                    param_ptr
+                                },
                                 *parameter_types.get(i).unwrap(),
                             ),
                         );
@@ -147,7 +152,7 @@ impl<'ctx> CodeGen<'ctx> {
 
                 ExprKind::Return(r) => match &r.as_ref().as_ref().unwrap().inner {
                     b @ ExprKind::Binary(..) => {
-                        let ty = match VarType::from(b) {
+                        let ty = match VarType::create(b, var_map) {
                             VarType::Int => i64_t,
                             VarType::Float => f64_t,
                             VarType::Bool => bool_t,
@@ -155,7 +160,7 @@ impl<'ctx> CodeGen<'ctx> {
 
                         let ret_value = self.builder.build_alloca(ty, "");
 
-                        self.eval(b, ret_value);
+                        self.eval(b, ret_value, var_map);
 
                         let ret_value = self.builder.build_load(ty, ret_value, "");
                         self.builder.build_return(Some(&ret_value));
@@ -231,7 +236,12 @@ impl<'ctx> CodeGen<'ctx> {
     //       target_machine.write_to_file(&self.module, FileType::Object, Path::new("./output.o")).unwrap();
     // }
 
-    pub(crate) fn eval(&self, binary_op: &ExprKind, ptr: PointerValue) {
+    pub(crate) fn eval(
+        &self,
+        binary_op: &ExprKind,
+        ptr: PointerValue,
+        var_map: &mut HashMap<String, (PointerValue<'ctx>, BasicTypeEnum<'ctx>)>,
+    ) {
         use BinaryOp::*;
         use ExprKind::*;
 
@@ -287,10 +297,8 @@ impl<'ctx> CodeGen<'ctx> {
             }
 
             (Ident(lhs), op, Ident(rhs)) => {
-                let ((lhs, lhs_type), (rhs, rhs_type)) = (
-                    self.var_map.get(lhs).unwrap(),
-                    self.var_map.get(rhs).unwrap(),
-                );
+                let ((lhs, lhs_type), (rhs, rhs_type)) =
+                    (var_map.get(lhs).unwrap(), var_map.get(rhs).unwrap());
 
                 let (lhs, rhs) = (
                     self.builder.build_load(*lhs_type, *lhs, "lhs_ident_val"),
@@ -343,7 +351,7 @@ impl<'ctx> CodeGen<'ctx> {
             }
 
             (Ident(lhs), op, Int(rhs)) => {
-                let (lhs, lhs_type) = self.var_map.get(lhs).unwrap();
+                let (lhs, lhs_type) = var_map.get(lhs).unwrap();
                 let lhs = self
                     .builder
                     .build_load(*lhs_type, *lhs, "")
@@ -364,7 +372,7 @@ impl<'ctx> CodeGen<'ctx> {
             }
 
             (Int(lhs), op, Ident(rhs)) => {
-                let (rhs, rhs_type) = self.var_map.get(rhs).unwrap();
+                let (rhs, rhs_type) = var_map.get(rhs).unwrap();
                 let rhs = self
                     .builder
                     .build_load(*rhs_type, *rhs, "")
@@ -385,7 +393,7 @@ impl<'ctx> CodeGen<'ctx> {
             }
 
             (Ident(lhs), op, Float(rhs)) => {
-                let (lhs, lhs_type) = self.var_map.get(lhs).unwrap();
+                let (lhs, lhs_type) = var_map.get(lhs).unwrap();
                 let lhs = self
                     .builder
                     .build_load(*lhs_type, *lhs, "")
@@ -406,7 +414,7 @@ impl<'ctx> CodeGen<'ctx> {
             }
 
             (Float(lhs), op, Ident(rhs)) => {
-                let (rhs, rhs_type) = self.var_map.get(rhs).unwrap();
+                let (rhs, rhs_type) = var_map.get(rhs).unwrap();
                 let rhs = self
                     .builder
                     .build_load(*rhs_type, *rhs, "")
@@ -430,7 +438,7 @@ impl<'ctx> CodeGen<'ctx> {
                 let new_ptr = self
                     .builder
                     .build_alloca(self.context.f64_type(), "new_alloca");
-                self.eval(b, new_ptr);
+                self.eval(b, new_ptr, var_map);
 
                 let lhs = self
                     .builder
@@ -454,7 +462,7 @@ impl<'ctx> CodeGen<'ctx> {
                 let new_ptr = self
                     .builder
                     .build_alloca(self.context.f64_type(), "new_alloca");
-                self.eval(b, new_ptr);
+                self.eval(b, new_ptr, var_map);
 
                 let lhs = self
                     .builder
@@ -475,7 +483,7 @@ impl<'ctx> CodeGen<'ctx> {
             }
 
             (lhs_b @ Binary(..), op, rhs_b @ Binary(..)) => {
-                let ty = VarType::from(lhs_b);
+                let ty = VarType::create(lhs_b, var_map);
                 let (new_ptr_lhs, new_ptr_rhs) = match ty {
                     VarType::Int => (
                         self.builder
@@ -494,8 +502,8 @@ impl<'ctx> CodeGen<'ctx> {
                     _ => unreachable!(),
                 };
 
-                self.eval(lhs_b, new_ptr_lhs);
-                self.eval(rhs_b, new_ptr_rhs);
+                self.eval(lhs_b, new_ptr_lhs, var_map);
+                self.eval(rhs_b, new_ptr_rhs, var_map);
 
                 let res = match ty {
                     VarType::Int => {
@@ -546,7 +554,7 @@ impl<'ctx> CodeGen<'ctx> {
                 self.builder.build_store(ptr, res);
             }
 
-            _ => unreachable!("sussy baka"),
+            _ => unreachable!("Hamza not doing his work"),
         }
     }
 
@@ -590,8 +598,11 @@ impl FromStr for VarType {
     }
 }
 
-impl From<&ExprKind> for VarType {
-    fn from(value: &ExprKind) -> Self {
+impl<'ctx> VarType {
+    fn create(
+        value: &ExprKind,
+        var_map: &mut HashMap<String, (PointerValue<'ctx>, BasicTypeEnum<'ctx>)>,
+    ) -> Self {
         use ExprKind::*;
         let Binary(lhs, _, rhs) = value else {
             panic!("cannot get the type of anything except `ExprKind::Binary`");
@@ -602,10 +613,11 @@ impl From<&ExprKind> for VarType {
         match (lhs, rhs) {
             (Int(_), _) | (_, Int(_)) => Self::Int,
             (Float(_), _) | (_, Float(_)) => Self::Float,
-            (b @ Binary(..), _) | (_, b @ Binary(..)) => Self::from(b),
+            (Ident(i), _) | (_, Ident(i)) => VarType::from(var_map.get(i).unwrap().1),
+            (b @ Binary(..), _) | (_, b @ Binary(..)) => Self::create(b, var_map),
 
             // bool arithmetic isn't possible
-            // therefore, no need to handle bool here
+            // therefore, no need to handle it
             _ => unreachable!("Hamza not doing his work"),
         }
     }
@@ -618,7 +630,7 @@ impl<'a> From<BasicTypeEnum<'a>> for VarType {
             BasicTypeEnum::IntType(..) => Self::Bool,
             BasicTypeEnum::FloatType(..) => Self::Float,
 
-            _ => panic!("unknown type type"),
+            _ => panic!("unknown type"),
         }
     }
 }
