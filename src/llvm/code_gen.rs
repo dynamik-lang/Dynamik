@@ -8,7 +8,7 @@ use inkwell::context::Context;
 use inkwell::execution_engine::ExecutionEngine;
 use inkwell::module::Module;
 
-use inkwell::types::BasicType;
+use inkwell::types::{BasicType, BasicTypeEnum};
 use inkwell::values::{BasicValue, FloatValue, FunctionValue, IntValue, PointerValue};
 use inkwell::OptimizationLevel;
 
@@ -19,7 +19,7 @@ pub struct CodeGen<'ctx> {
     pub(crate) module: Module<'ctx>,
     pub(crate) builder: Builder<'ctx>,
     pub(crate) execution_engine: ExecutionEngine<'ctx>,
-    pub(crate) var_map: HashMap<String, PointerValue<'ctx>>,
+    pub(crate) var_map: HashMap<String, (PointerValue<'ctx>, BasicTypeEnum<'ctx>)>,
     pub(crate) fn_map: HashMap<String, (FunctionValue<'ctx>, BasicBlock<'ctx>)>,
 }
 
@@ -249,6 +249,146 @@ impl<'ctx> CodeGen<'ctx> {
                     Mul => self
                         .builder
                         .build_float_mul(lhs, rhs, "binary_op_float_sub"),
+
+                    _ => unreachable!(),
+                };
+
+                self.builder.build_store(ptr, res);
+            }
+
+            (Ident(lhs), op, Ident(rhs)) => {
+                let ((lhs, lhs_type), (rhs, rhs_type)) = (
+                    self.var_map.get(lhs).unwrap(),
+                    self.var_map.get(rhs).unwrap(),
+                );
+
+                let (lhs, rhs) = (
+                    self.builder.build_load(*lhs_type, *lhs, "lhs_ident_val"),
+                    self.builder.build_load(*rhs_type, *rhs, "rhs_ident_val"),
+                );
+
+                let is_int = lhs_type.is_int_type();
+
+                let res = match op {
+                    Add if is_int => self
+                        .builder
+                        .build_int_add(lhs.into_int_value(), rhs.into_int_value(), "")
+                        .as_basic_value_enum(),
+                    Add => self
+                        .builder
+                        .build_float_add(lhs.into_float_value(), rhs.into_float_value(), "")
+                        .as_basic_value_enum(),
+
+                    Sub if is_int => self
+                        .builder
+                        .build_int_sub(lhs.into_int_value(), rhs.into_int_value(), "")
+                        .as_basic_value_enum(),
+                    Sub => self
+                        .builder
+                        .build_float_sub(lhs.into_float_value(), rhs.into_float_value(), "")
+                        .as_basic_value_enum(),
+
+                    Div if is_int => self
+                        .builder
+                        .build_int_signed_div(lhs.into_int_value(), rhs.into_int_value(), "")
+                        .as_basic_value_enum(),
+                    Div => self
+                        .builder
+                        .build_float_div(lhs.into_float_value(), rhs.into_float_value(), "")
+                        .as_basic_value_enum(),
+
+                    Mul if is_int => self
+                        .builder
+                        .build_int_mul(lhs.into_int_value(), rhs.into_int_value(), "")
+                        .as_basic_value_enum(),
+                    Mul => self
+                        .builder
+                        .build_float_mul(lhs.into_float_value(), rhs.into_float_value(), "")
+                        .as_basic_value_enum(),
+
+                    _ => unreachable!(),
+                };
+
+                self.builder.build_store(ptr, res);
+            }
+
+            (Ident(lhs), op, Int(rhs)) => {
+                let (lhs, lhs_type) = self.var_map.get(lhs).unwrap();
+                let lhs = self
+                    .builder
+                    .build_load(*lhs_type, *lhs, "")
+                    .into_int_value();
+
+                let rhs = self.create_int(*rhs);
+
+                let res = match op {
+                    Add => self.builder.build_int_add(lhs, rhs, ""),
+                    Sub => self.builder.build_int_sub(lhs, rhs, ""),
+                    Div => self.builder.build_int_signed_div(lhs, rhs, ""),
+                    Mul => self.builder.build_int_mul(lhs, rhs, ""),
+
+                    _ => unreachable!(),
+                };
+
+                self.builder.build_store(ptr, res);
+            }
+
+            (Int(lhs), op, Ident(rhs)) => {
+                let (rhs, rhs_type) = self.var_map.get(rhs).unwrap();
+                let rhs = self
+                    .builder
+                    .build_load(*rhs_type, *rhs, "")
+                    .into_int_value();
+
+                let lhs = self.create_int(*lhs);
+
+                let res = match op {
+                    Add => self.builder.build_int_add(lhs, rhs, ""),
+                    Sub => self.builder.build_int_sub(lhs, rhs, ""),
+                    Div => self.builder.build_int_signed_div(lhs, rhs, ""),
+                    Mul => self.builder.build_int_mul(lhs, rhs, ""),
+
+                    _ => unreachable!(),
+                };
+
+                self.builder.build_store(ptr, res);
+            }
+
+            (Ident(lhs), op, Float(rhs)) => {
+                let (lhs, lhs_type) = self.var_map.get(lhs).unwrap();
+                let lhs = self
+                    .builder
+                    .build_load(*lhs_type, *lhs, "")
+                    .into_float_value();
+
+                let rhs = self.create_float(*rhs);
+
+                let res = match op {
+                    Add => self.builder.build_float_add(lhs, rhs, ""),
+                    Sub => self.builder.build_float_sub(lhs, rhs, ""),
+                    Div => self.builder.build_float_div(lhs, rhs, ""),
+                    Mul => self.builder.build_float_mul(lhs, rhs, ""),
+
+                    _ => unreachable!(),
+                };
+
+                self.builder.build_store(ptr, res);
+            }
+
+            (Float(lhs), op, Ident(rhs)) => {
+                let (rhs, rhs_type) = self.var_map.get(rhs).unwrap();
+                let rhs = self
+                    .builder
+                    .build_load(*rhs_type, *rhs, "")
+                    .into_float_value();
+
+                let lhs = self.create_float(*lhs);
+
+                let res = match op {
+                    Add => self.builder.build_float_add(lhs, rhs, ""),
+                    Sub => self.builder.build_float_sub(lhs, rhs, ""),
+                    Div => self.builder.build_float_div(lhs, rhs, ""),
+                    Mul => self.builder.build_float_mul(lhs, rhs, ""),
 
                     _ => unreachable!(),
                 };
