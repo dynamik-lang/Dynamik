@@ -10,11 +10,9 @@ use inkwell::module::Module;
 
 use inkwell::types::{BasicType, BasicTypeEnum};
 use inkwell::values::{BasicValue, FloatValue, FunctionValue, IntValue, PointerValue};
-use inkwell::{OptimizationLevel};
+use inkwell::OptimizationLevel;
 
 use crate::parser::{BinaryOp, Expr, ExprKind};
-
-
 
 pub struct CodeGen<'ctx> {
     pub(crate) context: &'ctx Context,
@@ -72,11 +70,10 @@ impl<'ctx> CodeGen<'ctx> {
                     let parameters = parameters
                         .into_iter()
                         .map(|i| {
-                            if let Some(ty) = VarType::from_str(&i).ok() {
+                            if let Ok(ty) = VarType::from_str(&i) {
                                 match ty {
                                     VarType::Int => i64_t.into(),
                                     VarType::Float => i64_t.into(),
-
                                     // _ => unreachable!(),
                                 }
                             } else {
@@ -87,13 +84,12 @@ impl<'ctx> CodeGen<'ctx> {
 
                     let fn_type;
                     if let Some(return_type) = return_type {
-                        let t = VarType::from_str(&return_type).ok();
+                        let t = VarType::from_str(return_type).ok();
 
                         if let Some(n_type) = t {
                             fn_type = match n_type {
                                 VarType::Int => i64_t.fn_type(&parameters, false),
                                 VarType::Float => f64_t.fn_type(&parameters, false),
-
                                 // _ => unreachable!(),
                             };
                         } else {
@@ -129,7 +125,6 @@ impl<'ctx> CodeGen<'ctx> {
                         let ty = match VarType::from(b) {
                             VarType::Int => i64_t,
                             VarType::Float => f64_t,
-
                             // _ => unreachable!()
                         };
 
@@ -141,7 +136,15 @@ impl<'ctx> CodeGen<'ctx> {
                         self.builder.build_return(Some(&ret_value));
                     }
 
-                    ExprKind::Int(_i) => {}
+                    ExprKind::Int(i) => {
+                        self.builder
+                            .build_return(Some(&self.create_int(*i).as_basic_value_enum()));
+                    }
+
+                    ExprKind::Float(f) => {
+                        self.builder
+                            .build_return(Some(&self.create_float(*f).as_basic_value_enum()));
+                    }
 
                     _ => unreachable!(),
                 },
@@ -265,7 +268,7 @@ impl<'ctx> CodeGen<'ctx> {
                 let new_ptr = self
                     .builder
                     .build_alloca(self.context.f64_type(), "new_alloca");
-                self.eval(&b, new_ptr);
+                self.eval(b, new_ptr);
 
                 let lhs = self
                     .builder
@@ -289,7 +292,7 @@ impl<'ctx> CodeGen<'ctx> {
                 let new_ptr = self
                     .builder
                     .build_alloca(self.context.f64_type(), "new_alloca");
-                self.eval(&b, new_ptr);
+                self.eval(b, new_ptr);
 
                 let lhs = self
                     .builder
@@ -327,8 +330,8 @@ impl<'ctx> CodeGen<'ctx> {
                     ),
                 };
 
-                self.eval(&lhs_b, new_ptr_lhs);
-                self.eval(&rhs_b, new_ptr_rhs);
+                self.eval(lhs_b, new_ptr_lhs);
+                self.eval(rhs_b, new_ptr_rhs);
 
                 let res = match ty {
                     VarType::Int => {
