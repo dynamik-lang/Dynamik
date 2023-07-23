@@ -49,7 +49,7 @@ impl<'ctx> CodeGen<'ctx> {
                 }
 
                 b @ ExprKind::Binary(..) => {
-                    self.eval(b.clone(), var_alloca);
+                    self.eval(&b, var_alloca);
                 }
 
                 _ => unreachable!(),

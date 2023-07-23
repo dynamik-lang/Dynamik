@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::path::Path;
+use std::str::FromStr;
 
 use inkwell::basic_block::BasicBlock;
 use inkwell::builder::Builder;
@@ -57,13 +58,6 @@ impl<'ctx> CodeGen<'ctx> {
         let i64_t = self.context.i64_type().as_basic_type_enum();
         let f64_t = self.context.f64_type().as_basic_type_enum();
 
-        let get_type = |t: String| match t.as_str() {
-            "int" => Some(i64_t),
-            "float" => Some(f64_t),
-
-            _ => None,
-        };
-
         for node in ast {
             match &node.inner {
                 ExprKind::Let(var_name, var_type, var_value) => {
@@ -80,8 +74,13 @@ impl<'ctx> CodeGen<'ctx> {
                     let parameters = parameters
                         .into_iter()
                         .map(|i| {
-                            if let Some(n_type) = get_type(i) {
-                                n_type.into()
+                            if let Some(ty) = VarType::from_str(&i).ok() {
+                                match ty {
+                                    VarType::Int => i64_t.into(),
+                                    VarType::Float => i64_t.into(),
+
+                                    _ => unreachable!(),
+                                }
                             } else {
                                 unimplemented!("custom types are not implemented")
                             }
@@ -90,13 +89,14 @@ impl<'ctx> CodeGen<'ctx> {
 
                     let fn_type;
                     if let Some(return_type) = return_type {
-                        let t = get_type(return_type.to_string());
+                        let t = VarType::from_str(&return_type).ok();
 
                         if let Some(n_type) = t {
-                            fn_type = if return_type.starts_with('i') {
-                                n_type.into_int_type().fn_type(&parameters, false)
-                            } else {
-                                n_type.into_float_type().fn_type(&parameters, false)
+                            fn_type = match n_type {
+                                VarType::Int => i64_t.fn_type(&parameters, false),
+                                VarType::Float => f64_t.fn_type(&parameters, false),
+
+                                _ => unreachable!(),
                             };
                         } else {
                             unimplemented!("custom types are not implemented")
@@ -125,6 +125,28 @@ impl<'ctx> CodeGen<'ctx> {
                     self.builder
                         .position_at_end(self.fn_map.get("__main__").unwrap().1);
                 }
+
+                ExprKind::Return(r) => match &r.as_ref().as_ref().unwrap().inner {
+                    b @ ExprKind::Binary(..) => {
+                        let ty = match VarType::from(b) {
+                            VarType::Int => i64_t,
+                            VarType::Float => f64_t,
+
+                            _ => unreachable!()
+                        };
+
+                        let ret_value = self.builder.build_alloca(ty, "");
+
+                        self.eval(b, ret_value);
+
+                        let ret_value = self.builder.build_load(ty, ret_value, "");
+                        self.builder.build_return(Some(&ret_value));
+                    }
+
+                    ExprKind::Int(i) => {}
+
+                    _ => unreachable!(),
+                },
 
                 _ => {}
             }
@@ -186,24 +208,7 @@ impl<'ctx> CodeGen<'ctx> {
         }
     }
 
-    pub(crate) fn get_type(binary_op: &ExprKind) -> VarType {
-        use ExprKind::*;
-        let Binary(lhs, _, rhs) = binary_op else {
-            panic!("cannot eval anything except BinaryOp");
-        };
-
-        let (lhs, rhs) = (&lhs.inner, &rhs.inner);
-
-        match (lhs, rhs) {
-            (Int(_), _) | (_, Int(_)) => VarType::Int,
-            (Float(_), _) | (_, Float(_)) => VarType::Float,
-            (b @ Binary(..), _) | (_, b @ Binary(..)) => Self::get_type(&b),
-
-            _ => unreachable!("Hamza not doing his work"),
-        }
-    }
-
-    pub(crate) fn eval(&self, binary_op: ExprKind, ptr: PointerValue) {
+    pub(crate) fn eval(&self, binary_op: &ExprKind, ptr: PointerValue) {
         use BinaryOp::*;
         use ExprKind::*;
 
@@ -211,11 +216,11 @@ impl<'ctx> CodeGen<'ctx> {
             panic!("cannot eval anything except BinaryOp");
         };
 
-        let (lhs, rhs) = (lhs.inner, rhs.inner);
+        let (lhs, rhs) = (&lhs.inner, &rhs.inner);
 
         match (lhs, op, rhs) {
             (Int(lhs), op, Int(rhs)) => {
-                let (lhs, rhs) = (self.create_int(lhs), self.create_int(rhs));
+                let (lhs, rhs) = (self.create_int(*lhs), self.create_int(*rhs));
                 let res = match op {
                     Add => self.builder.build_int_add(lhs, rhs, "binary_op_int_add"),
 
@@ -234,7 +239,7 @@ impl<'ctx> CodeGen<'ctx> {
             }
 
             (Float(lhs), op, Float(rhs)) => {
-                let (lhs, rhs) = (self.create_float(lhs), self.create_float(rhs));
+                let (lhs, rhs) = (self.create_float(*lhs), self.create_float(*rhs));
                 let res = match op {
                     Add => self
                         .builder
@@ -262,13 +267,13 @@ impl<'ctx> CodeGen<'ctx> {
                 let new_ptr = self
                     .builder
                     .build_alloca(self.context.f64_type(), "new_alloca");
-                self.eval(b, new_ptr);
+                self.eval(&b, new_ptr);
 
                 let lhs = self
                     .builder
                     .build_load(self.context.i64_type(), new_ptr, "");
 
-                let (lhs, rhs) = (lhs.into_int_value(), self.create_int(other));
+                let (lhs, rhs) = (lhs.into_int_value(), self.create_int(*other));
 
                 let res = match op {
                     Add => self.builder.build_int_add(lhs, rhs, ""),
@@ -286,13 +291,13 @@ impl<'ctx> CodeGen<'ctx> {
                 let new_ptr = self
                     .builder
                     .build_alloca(self.context.f64_type(), "new_alloca");
-                self.eval(b, new_ptr);
+                self.eval(&b, new_ptr);
 
                 let lhs = self
                     .builder
                     .build_load(self.context.f64_type(), new_ptr, "");
 
-                let (lhs, rhs) = (lhs.into_float_value(), self.create_float(other));
+                let (lhs, rhs) = (lhs.into_float_value(), self.create_float(*other));
 
                 let res = match op {
                     Add => self.builder.build_float_add(lhs, rhs, ""),
@@ -307,7 +312,7 @@ impl<'ctx> CodeGen<'ctx> {
             }
 
             (lhs_b @ Binary(..), op, rhs_b @ Binary(..)) => {
-                let ty = Self::get_type(&lhs_b);
+                let ty = VarType::from(lhs_b);
                 let (new_ptr_lhs, new_ptr_rhs) = match ty {
                     VarType::Int => (
                         self.builder
@@ -324,8 +329,8 @@ impl<'ctx> CodeGen<'ctx> {
                     ),
                 };
 
-                self.eval(lhs_b, new_ptr_lhs);
-                self.eval(rhs_b, new_ptr_rhs);
+                self.eval(&lhs_b, new_ptr_lhs);
+                self.eval(&rhs_b, new_ptr_rhs);
 
                 let res = match ty {
                     VarType::Int => {
@@ -397,4 +402,36 @@ impl<'ctx> CodeGen<'ctx> {
 pub(crate) enum VarType {
     Int,
     Float,
+}
+
+impl FromStr for VarType {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "int" => Ok(Self::Int),
+            "float" => Ok(Self::Float),
+
+            _ => Err(format!("invalid type: {s}")),
+        }
+    }
+}
+
+impl From<&ExprKind> for VarType {
+    fn from(value: &ExprKind) -> Self {
+        use ExprKind::*;
+        let Binary(lhs, _, rhs) = value else {
+            panic!("cannot get the type of anything except `ExprKind::Binary`");
+        };
+
+        let (lhs, rhs) = (&lhs.inner, &rhs.inner);
+
+        match (lhs, rhs) {
+            (Int(_), _) | (_, Int(_)) => Self::Int,
+            (Float(_), _) | (_, Float(_)) => Self::Float,
+            (b @ Binary(..), _) | (_, b @ Binary(..)) => Self::from(b),
+
+            _ => unreachable!("Hamza not doing his work"),
+        }
+    }
 }
