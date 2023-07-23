@@ -6,7 +6,9 @@ use inkwell::builder::Builder;
 use inkwell::context::Context;
 use inkwell::execution_engine::ExecutionEngine;
 use inkwell::module::Module;
-use inkwell::targets::{InitializationConfig, TargetMachine, Target, RelocMode, CodeModel, FileType};
+use inkwell::targets::{
+    CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetMachine,
+};
 use inkwell::types::{BasicType, BasicTypeEnum};
 use inkwell::values::{BasicValue, FloatValue, FunctionValue, IntValue, PointerValue};
 use inkwell::{AddressSpace, OptimizationLevel};
@@ -33,7 +35,7 @@ impl<'ctx> CodeGen<'ctx> {
             .unwrap();
 
         let main_fn_type = context.i32_type().fn_type(&[], false);
-        let main_fn = module.add_function("main", main_fn_type, None);
+        let main_fn = module.add_function("__main__", main_fn_type, None);
 
         let entry = context.append_basic_block(main_fn, "entry");
         builder.position_at_end(entry);
@@ -124,37 +126,50 @@ impl<'ctx> CodeGen<'ctx> {
                         .position_at_end(self.fn_map.get("__main__").unwrap().1);
                 }
 
-                // for testing
-                // b @ ExprKind::Binary(..) => {
-                //     let p = self.builder.build_alloca(self.context.i64_type(), "");
-                //     self.eval(b.clone(), p);
-                // }
-
                 _ => {}
             }
         }
     }
 
-    pub fn compile_aot(&mut self, ast: &[Expr]) {
+    pub fn jit_run(&mut self, ast: &[Expr]) {
         let mut var_map = HashMap::new();
         self.process(ast, &mut var_map);
-        
-        self.builder.build_return(Some(&self.context.i32_type().const_int(0, false)));
+
+        self.builder.position_at_end(self.fn_map["__main__"].1);
+        self.builder
+            .build_return(Some(&self.context.i32_type().const_int(0, false)));
+
         self.module.print_to_stderr();
-        // Compiling it into a .o file
-        Target::initialize_native(&InitializationConfig::default()).expect("Failed to initialize native target");
-        let triple = TargetMachine::get_default_triple();
-        let target = Target::from_triple(&triple).unwrap();
-        let target_machine = target.create_target_machine(
-            &triple,
-            "generic", // cpu
-            "", // features
-            OptimizationLevel::None,
-            RelocMode::PIC,
-            CodeModel::Default,  
-          ).unwrap();
-          target_machine.write_to_file(&self.module, FileType::Object, Path::new("./output.o")).unwrap();
+
+        unsafe {
+            self.execution_engine
+                .run_function_as_main(self.fn_map["__main__"].0, &[])
+        };
     }
+
+    // pub fn compile(&mut self, ast: &[Expr]) {
+    //     let mut var_map = HashMap::new();
+    //     self.process(ast, &mut var_map);
+
+    //     self.builder.position_at_end(self.fn_map["__main__"].1);
+    //     self.builder.build_return(Some(&self.context.i32_type().const_int(0, false)));
+
+    //     self.module.print_to_stderr();
+
+    //     Compiling it into a .o file
+    //     Target::initialize_native(&InitializationConfig::default()).expect("Failed to initialize native target");
+    //     let triple = TargetMachine::get_default_triple();
+    //     let target = Target::from_triple(&triple).unwrap();
+    //     let target_machine = target.create_target_machine(
+    //         &triple,
+    //         "generic", // cpu
+    //         "", // features
+    //         OptimizationLevel::None,
+    //         RelocMode::PIC,
+    //         CodeModel::Default,
+    //       ).unwrap();
+    //       target_machine.write_to_file(&self.module, FileType::Object, Path::new("./output.o")).unwrap();
+    // }
 
     pub(crate) fn get_number_type(
         context: &'ctx Context,
@@ -330,7 +345,8 @@ impl<'ctx> CodeGen<'ctx> {
                             Mul => self.builder.build_int_mul(lhs, rhs, ""),
 
                             _ => unreachable!(),
-                        }.as_basic_value_enum()
+                        }
+                        .as_basic_value_enum()
                     }
 
                     VarType::Float => {
@@ -350,7 +366,8 @@ impl<'ctx> CodeGen<'ctx> {
                             Mul => self.builder.build_float_mul(lhs, rhs, ""),
 
                             _ => unreachable!(),
-                        }.as_basic_value_enum()
+                        }
+                        .as_basic_value_enum()
                     }
                 };
 
