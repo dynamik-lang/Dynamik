@@ -8,7 +8,7 @@ use inkwell::context::Context;
 use inkwell::execution_engine::ExecutionEngine;
 use inkwell::module::Module;
 
-use inkwell::types::{BasicType, BasicTypeEnum};
+use inkwell::types::BasicType;
 use inkwell::values::{BasicValue, FloatValue, FunctionValue, IntValue, PointerValue};
 use inkwell::OptimizationLevel;
 
@@ -53,6 +53,7 @@ impl<'ctx> CodeGen<'ctx> {
     fn process(&mut self, ast: &[Expr], var_map: &mut HashMap<String, PointerValue<'ctx>>) {
         let i64_t = self.context.i64_type().as_basic_type_enum();
         let f64_t = self.context.f64_type().as_basic_type_enum();
+        let bool_t = self.context.bool_type().as_basic_type_enum();
 
         for node in ast {
             match &node.inner {
@@ -74,6 +75,7 @@ impl<'ctx> CodeGen<'ctx> {
                                 match ty {
                                     VarType::Int => i64_t.into(),
                                     VarType::Float => i64_t.into(),
+                                    VarType::Bool => bool_t.into(),
                                     // _ => unreachable!(),
                                 }
                             } else {
@@ -90,6 +92,7 @@ impl<'ctx> CodeGen<'ctx> {
                             fn_type = match n_type {
                                 VarType::Int => i64_t.fn_type(&parameters, false),
                                 VarType::Float => f64_t.fn_type(&parameters, false),
+                                VarType::Bool => bool_t.fn_type(&parameters, false),
                                 // _ => unreachable!(),
                             };
                         } else {
@@ -125,7 +128,7 @@ impl<'ctx> CodeGen<'ctx> {
                         let ty = match VarType::from(b) {
                             VarType::Int => i64_t,
                             VarType::Float => f64_t,
-                            // _ => unreachable!()
+                            VarType::Bool => bool_t,
                         };
 
                         let ret_value = self.builder.build_alloca(ty, "");
@@ -146,6 +149,10 @@ impl<'ctx> CodeGen<'ctx> {
                             .build_return(Some(&self.create_float(*f).as_basic_value_enum()));
                     }
 
+                    ExprKind::Bool(b) => {
+                        self.builder
+                            .build_return(Some(&self.create_bool(*b).as_basic_value_enum()));
+                    }
                     _ => unreachable!(),
                 },
 
@@ -193,21 +200,6 @@ impl<'ctx> CodeGen<'ctx> {
     //       ).unwrap();
     //       target_machine.write_to_file(&self.module, FileType::Object, Path::new("./output.o")).unwrap();
     // }
-
-    pub(crate) fn get_number_type(
-        context: &'ctx Context,
-        type_name: &str,
-    ) -> Option<BasicTypeEnum<'ctx>> {
-        let i64_t = context.i64_type().as_basic_type_enum();
-        let f64_t = context.f64_type().as_basic_type_enum();
-
-        match type_name {
-            "int" => Some(i64_t),
-            "float" => Some(f64_t),
-
-            _ => None,
-        }
-    }
 
     pub(crate) fn eval(&self, binary_op: &ExprKind, ptr: PointerValue) {
         use BinaryOp::*;
@@ -328,6 +320,8 @@ impl<'ctx> CodeGen<'ctx> {
                         self.builder
                             .build_alloca(self.context.f64_type(), "rhs_alloca"),
                     ),
+
+                    _ => unreachable!(),
                 };
 
                 self.eval(lhs_b, new_ptr_lhs);
@@ -375,6 +369,8 @@ impl<'ctx> CodeGen<'ctx> {
                         }
                         .as_basic_value_enum()
                     }
+
+                    _ => unreachable!(),
                 };
 
                 self.builder.build_store(ptr, res);
@@ -397,12 +393,17 @@ impl<'ctx> CodeGen<'ctx> {
     pub(crate) fn create_float(&self, val: f64) -> FloatValue {
         self.context.f64_type().const_float(val)
     }
+
+    pub(crate) fn create_bool(&self, val: bool) -> IntValue {
+        self.context.bool_type().const_int(val as _, false)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum VarType {
     Int,
     Float,
+    Bool,
 }
 
 impl FromStr for VarType {
@@ -412,6 +413,7 @@ impl FromStr for VarType {
         match s.to_lowercase().as_str() {
             "int" => Ok(Self::Int),
             "float" => Ok(Self::Float),
+            "bool" => Ok(Self::Bool),
 
             _ => Err(format!("invalid type: {s}")),
         }
@@ -432,6 +434,8 @@ impl From<&ExprKind> for VarType {
             (Float(_), _) | (_, Float(_)) => Self::Float,
             (b @ Binary(..), _) | (_, b @ Binary(..)) => Self::from(b),
 
+            // bool arithmetic isn't possible
+            // therefore, no need to handle bool here
             _ => unreachable!("Hamza not doing his work"),
         }
     }

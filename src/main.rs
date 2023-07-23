@@ -14,11 +14,7 @@ use miette::{miette, LabeledSpan};
 fn main() {
     // Results in a error lol
     const SRC: &str = r#"
-let a: float = 6.5;
-if 1 + 6 {
-    let a: int = 9;
-    a + 6.2
-}
+let a: bool = false;
 "#;
 
     let token_iter = LogosToken::lexer(SRC)
