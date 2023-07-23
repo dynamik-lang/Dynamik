@@ -38,7 +38,7 @@ if 1 + 6 {
                 if checker.typecheck() {
                     let context = inkwell::context::Context::create();
                     let mut code_gen = CodeGen::new(&context);
-                    code_gen.compile_aot(&o);
+                    code_gen.jit_run(&o);
                 };
             }
         }
