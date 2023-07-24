@@ -3,11 +3,8 @@ use std::{
     ops::Range,
 };
 
-use chumsky::{
-    input::{ValueInput},
-    prelude::*,
-};
-use logos::{Logos};
+use chumsky::{input::ValueInput, prelude::*};
+use logos::Logos;
 
 pub type Span = SimpleSpan<usize>;
 #[derive(Logos, Debug, Clone, PartialEq)]
@@ -78,7 +75,7 @@ pub enum LogosToken<'a> {
     String(&'a str),
     // #[regex(r#"//[^\n]*\n"#)]
     // LineComment,
-    #[regex(r#"[A-Za-z]([A-Za-z]|_|\d)*"#)]
+    #[regex(r#"[A-Za-z_]([A-Za-z]|_|\d)*"#)]
     Ident(&'a str),
     #[token("let")]
     KwLet,
@@ -158,7 +155,7 @@ pub enum ExprKind {
     FunctionCall(Box<Expr>, Vec<Expr>),
     Function(String, Vec<(String, String)>, Option<String>, Vec<Expr>),
     If(Box<Expr>, Vec<Expr>, Option<Vec<Expr>>), // IF <condition> <block> (else <block>)?
-    ExternFunction(String, Vec<String>, Option<String>),
+    ExternFunction(String, Vec<String>, Option<String>, bool),
     Return(Box<Option<Expr>>),
 }
 #[derive(Debug, Clone)]
@@ -309,10 +306,7 @@ where
                     .then(just(LogosToken::Arrow).ignore_then(ident).or_not()),
             )
             .then_ignore(just(LogosToken::LBrace))
-            .then(
-                expr.clone().repeated()
-                    .collect::<Vec<_>>(),
-            )
+            .then(expr.clone().repeated().collect::<Vec<_>>())
             .then_ignore(just(LogosToken::RBrace))
             .map_with_span(|((name, (params, return_type)), stmts), span: Span| {
                 Expr::new(
@@ -326,25 +320,29 @@ where
         let if_expr = just(LogosToken::KwIf)
             .ignore_then(inline.clone())
             .then(
-                expr.clone().repeated()
+                expr.clone()
+                    .repeated()
                     .collect::<Vec<_>>()
                     .delimited_by(just(LogosToken::LBrace), just(LogosToken::RBrace)),
             )
             .then(
                 just(LogosToken::KwElse)
                     .ignore_then(
-                        expr.clone().repeated()
+                        expr.clone()
+                            .repeated()
                             .collect::<Vec<_>>()
                             .delimited_by(just(LogosToken::LBrace), just(LogosToken::RBrace)),
                     )
                     .or_not(),
-        ).map_with_span(|((condition, body), else_), span: Span| {
-            Expr::new(span.into(), ExprKind::If(Box::new(condition), body, else_))
-        });
+            )
+            .map_with_span(|((condition, body), else_), span: Span| {
+                Expr::new(span.into(), ExprKind::If(Box::new(condition), body, else_))
+            });
         let extern_fn = just(LogosToken::KwExtern)
             .ignore_then(just(LogosToken::String("\"C\"")))
-            .ignore_then(just(LogosToken::Ident("fn")))
-            .ignore_then(ident)
+            .ignore_then(just(LogosToken::KwLet))
+            .ignore_then(just(LogosToken::Ident("var")).or_not().map(|v| v.is_some()))
+            .then(ident)
             .then(
                 ident
                     .clone()
@@ -354,10 +352,10 @@ where
                     .delimited_by(just(LogosToken::LParen), just(LogosToken::RParen)),
             )
             .then(just(LogosToken::Arrow).ignore_then(ident).or_not())
-            .map_with_span(|((name, param_types), return_type), span: Span| {
+            .map_with_span(|(((is_var, name), param_types), return_type), span: Span| {
                 Expr::new(
                     span.into(),
-                    ExprKind::ExternFunction(name, param_types, return_type),
+                    ExprKind::ExternFunction(name, param_types, return_type, is_var),
                 )
             });
         function

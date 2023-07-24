@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use std::path::Path;
 use std::str::FromStr;
 
 use inkwell::basic_block::BasicBlock;
@@ -8,6 +9,7 @@ use inkwell::context::Context;
 use inkwell::execution_engine::ExecutionEngine;
 use inkwell::module::Module;
 
+use inkwell::targets::{Target, InitializationConfig, TargetMachine, RelocMode, CodeModel, FileType};
 use inkwell::types::{BasicType, BasicTypeEnum};
 use inkwell::values::{BasicValue, FloatValue, FunctionValue, IntValue, PointerValue};
 use inkwell::{AddressSpace, OptimizationLevel};
@@ -74,7 +76,6 @@ impl<'ctx> CodeGen<'ctx> {
         let i64_t = self.context.i64_type().as_basic_type_enum();
         let f64_t = self.context.f64_type().as_basic_type_enum();
         let bool_t = self.context.bool_type().as_basic_type_enum();
-
         for node in ast {
             match &node.inner {
                 ExprKind::Let(var_name, var_type, var_value) => {
@@ -103,7 +104,8 @@ impl<'ctx> CodeGen<'ctx> {
                             }
                         })
                         .collect::<Vec<_>>();
-
+                    // Print hello world
+                    
                     let parameters = parameters
                         .into_iter()
                         .map(|i| {
@@ -240,29 +242,28 @@ impl<'ctx> CodeGen<'ctx> {
         };
     }
 
-    // pub fn compile(&mut self, ast: &[Expr]) {
-    //     let mut var_map = HashMap::new();
-    //     self.process(ast, &mut var_map);
+    pub fn compile(&mut self, ast: &[Expr]) {
+        let mut var_map = HashMap::new();
+        self.process(ast, &mut var_map);
 
-    //     self.builder.position_at_end(self.fn_map["__main__"].1);
-    //     self.builder.build_return(Some(&self.context.i32_type().const_int(0, false)));
+        self.builder.position_at_end(self.fn_map["__main__"].1.unwrap());
+        self.builder.build_return(Some(&self.context.i32_type().const_int(0, false)));
 
-    //     self.module.print_to_stderr();
+        self.module.print_to_stderr();
 
-    //     Compiling it into a .o file
-    //     Target::initialize_native(&InitializationConfig::default()).expect("Failed to initialize native target");
-    //     let triple = TargetMachine::get_default_triple();
-    //     let target = Target::from_triple(&triple).unwrap();
-    //     let target_machine = target.create_target_machine(
-    //         &triple,
-    //         "generic", // cpu
-    //         "", // features
-    //         OptimizationLevel::None,
-    //         RelocMode::PIC,
-    //         CodeModel::Default,
-    //       ).unwrap();
-    //       target_machine.write_to_file(&self.module, FileType::Object, Path::new("./output.o")).unwrap();
-    // }
+        Target::initialize_native(&InitializationConfig::default()).expect("Failed to initialize native target");
+        let triple = TargetMachine::get_default_triple();
+        let target = Target::from_triple(&triple).unwrap();
+        let target_machine = target.create_target_machine(
+            &triple,
+            "generic", // cpu
+            "", // features
+            OptimizationLevel::None,
+            RelocMode::PIC,
+            CodeModel::Default,
+          ).unwrap();
+          target_machine.write_to_file(&self.module, FileType::Object, Path::new("./output.o")).unwrap();
+    }
 
     pub(crate) fn eval(
         &self,

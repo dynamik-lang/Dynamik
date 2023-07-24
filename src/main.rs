@@ -1,10 +1,11 @@
 mod analyzer;
 pub mod llvm;
 pub mod parser;
+use llvm::Compiler;
 mod typechecker;
 use std::ops::Range;
 
-use llvm::CodeGen;
+// use llvm::CodeGen;
 
 use crate::parser::*;
 use chumsky::{input::Stream, prelude::*};
@@ -13,16 +14,7 @@ use miette::{miette, LabeledSpan};
 
 fn main() {
     const SRC: &str = r#"
-let add(a: int, b: int) -> int {
-    return a + b;
-}
-
-let v1: int = 5;
-let v2: int = 64;
-
-let sum: int = add(v1, v2);
-
-printf("sum: %lld", sum);
+extern "C" let var printf(string)
 "#;
 
     let token_iter = LogosToken::lexer(SRC)
@@ -41,8 +33,8 @@ printf("sum: %lld", sum);
                 let mut checker = typechecker::TypeChecker::new(o.clone(), SRC);
                 if checker.typecheck() {
                     let context = inkwell::context::Context::create();
-                    let mut code_gen = CodeGen::new(&context);
-                    code_gen.jit_run(&o);
+                    let mut compiler = Compiler::new(&context);
+                    compiler.compile(&o);
                 };
             }
         }

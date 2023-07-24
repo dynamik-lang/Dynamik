@@ -5,6 +5,7 @@ use miette::{miette, LabeledSpan, Report};
 #[derive(Clone, Copy, Debug)]
 pub enum ScopeVal {
     Function(usize),
+    FunctionVariadic,
     Variable,
 }
 pub struct Analyzer {
@@ -59,11 +60,16 @@ impl Analyzer {
                     self.end_scope();
                 }
             }
-            ExprKind::ExternFunction(name, params, _) => {
+            ExprKind::ExternFunction(name, params, _, is_var) => {
+                let ty = if is_var {
+                    ScopeVal::FunctionVariadic
+                } else {
+                    ScopeVal::Function(params.len())
+                };
                 self.scopes
                     .last_mut()
                     .unwrap()
-                    .insert(name, ScopeVal::Function(params.len()));
+                    .insert(name, ty);
             }
             ExprKind::FunctionCall(callee, params) => match callee.inner {
                 ExprKind::Ident(name) => {

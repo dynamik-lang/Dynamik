@@ -1,4 +1,3 @@
-mod code_gen;
-mod helper;
-
-pub use code_gen::CodeGen;
+pub mod compiler;
+mod types;
+pub use compiler::Compiler;

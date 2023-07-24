@@ -6,6 +6,7 @@ use crate::parser::{Expr, ExprKind};
 pub struct FunctionLike {
     pub parameters: Vec<TypeForm>,
     pub return_type: Box<Option<TypeForm>>,
+    pub is_variadic: bool,
 }
 #[derive(Debug, Clone, PartialEq)]
 pub enum TypeForm {
@@ -96,6 +97,7 @@ impl TypeChecker {
                 let func_sig = FunctionLike {
                     parameters: params_ty_noname,
                     return_type: Box::new(return_type.clone()),
+                    is_variadic: false,
                 };
 
                 self.scopes
@@ -181,7 +183,7 @@ impl TypeChecker {
                 }
                 None
             }
-            ExprKind::ExternFunction(name, types, ret_type) => {
+            ExprKind::ExternFunction(name, types, ret_type, is_var) => {
                 let mut tys: Vec<TypeForm> = Vec::new();
                 let mut fails = false;
                 for t in types {
@@ -211,6 +213,7 @@ impl TypeChecker {
                     TypeForm::Function(FunctionLike {
                         parameters: tys,
                         return_type: Box::new(return_type),
+                        is_variadic: is_var,
                     }),
                 );
                 None
@@ -220,18 +223,36 @@ impl TypeChecker {
                     match self.get(ident.to_owned()) {
                         Some(v) => {
                             if let TypeForm::Function(f) = v {
-                                for (index, arg) in args.iter().enumerate() {
-                                    let ty = self.check(arg.clone());
-                                    let actual_type = f.parameters[index].clone();
-                                    if ty != Some(actual_type.clone()) {
-                                        self.basic_err(
-                                            format!(
-                                                "Expected argument as type {:?} found {:?}",
-                                                actual_type,
-                                                ty.unwrap_or(TypeForm::Void)
-                                            ),
-                                            arg.span.clone(),
-                                        )
+                                if !f.is_variadic {
+                                    for (index, arg) in args.iter().enumerate() {
+                                        let ty = self.check(arg.clone());
+                                        let actual_type = f.parameters[index].clone();
+                                        if ty != Some(actual_type.clone()) {
+                                            self.basic_err(
+                                                format!(
+                                                    "Expected argument as type {:?} found {:?}",
+                                                    actual_type,
+                                                    ty.unwrap_or(TypeForm::Void)
+                                                ),
+                                                arg.span.clone(),
+                                            )
+                                        }
+                                    }
+                                } else {
+                                    for (index, parameter) in f.parameters.iter().enumerate() {
+                                        let actual_type = parameter.to_owned();
+                                        let arg = args[index].clone();
+                                        let ty = self.check(arg.clone());
+                                        if ty != Some(actual_type.clone()) {
+                                            self.basic_err(
+                                                format!(
+                                                    "Expected argument as type {:?} found {:?}",
+                                                    actual_type,
+                                                    ty.unwrap_or(TypeForm::Void)
+                                                ),
+                                                arg.span.clone(),
+                                            )
+                                        }
                                     }
                                 }
                                 return *f.return_type;
@@ -277,6 +298,9 @@ impl TypeChecker {
                 if op.is_comp() {
                     Some(TypeForm::Bool)
                 } else {
+                    if lhs_ty.clone().unwrap_or(TypeForm::Void) == TypeForm::Bool && rhs_ty.unwrap_or(TypeForm::Void) == TypeForm::Bool {
+                        self.basic_err("Cannot do none-comp operation between booleans".into(), node.span)
+                    }
                     lhs_ty
                 }
             }

@@ -10,8 +10,8 @@ use inkwell::values::PointerValue;
 use crate::parser::Expr;
 use crate::parser::ExprKind;
 
-use super::code_gen::CodeGen;
-use super::code_gen::VarType;
+use super::code_gen_old::CodeGen;
+use super::code_gen_old::VarType;
 
 impl<'ctx> CodeGen<'ctx> {
     pub(crate) fn define_var(
