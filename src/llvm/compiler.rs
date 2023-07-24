@@ -3,14 +3,12 @@ use std::{collections::HashMap, path::Path};
 
 use super::types::*;
 use inkwell::{
-    basic_block::BasicBlock,
     builder::Builder,
     context::Context,
-    execution_engine::ExecutionEngine,
-    module::Module,
+    module::{Linkage, Module},
     targets::{CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetMachine},
-    types::{AnyType, BasicMetadataTypeEnum, BasicType, BasicTypeEnum},
-    values::{BasicMetadataValueEnum, FloatValue, FunctionValue, IntValue, PointerValue},
+    types::{BasicType, BasicTypeEnum},
+    values::{BasicMetadataValueEnum, BasicValueEnum},
     AddressSpace, OptimizationLevel,
 };
 
@@ -19,43 +17,39 @@ pub struct Compiler<'a> {
     pub(crate) context: &'a Context,
     pub(crate) module: Module<'a>,
     pub(crate) builder: Builder<'a>,
-    pub(crate) func_map: HashMap<String, FunctionVal<'a>>,
-    pub(crate) var_map: HashMap<String, Variable<'a>>,
-    pub(crate) exec_engine: ExecutionEngine<'a>,
+    pub(crate) fn_map: HashMap<String, FunctionVal<'a>>,
 }
 
-impl<'a> Compiler<'a> {
+impl<'ctx> Compiler<'ctx> {
     /// Create new compiler
-    pub fn new(ctx: &'a Context) -> Self {
-        let module = ctx.create_module("dynamik");
-        let builder = ctx.create_builder();
-        let exec_engine = module
-            .create_jit_execution_engine(OptimizationLevel::Aggressive)
-            .expect("Failed to create execute engine");
-        let main_fun_ty = ctx.i32_type().fn_type(&[], false);
-        let main_fun = module.add_function("main", main_fun_ty, None);
-        let entry = ctx.append_basic_block(main_fun, "entry");
+    pub fn new(context: &'ctx Context) -> Self {
+        let module = context.create_module("dynamik");
+        let builder = context.create_builder();
+        let main_fun_ty = context.i32_type().fn_type(&[], false);
+        let main_fun = module.add_function("__main__", main_fun_ty, None);
+        let entry = context.append_basic_block(main_fun, "entry");
         builder.position_at_end(entry);
 
-        let mut fun_map = HashMap::new();
+        let mut fn_map = HashMap::new();
+
         // Creating the function
-        fun_map.insert(
-            "main".into(),
+        fn_map.insert(
+            "__main__".into(),
             FunctionVal {
                 block: Some(entry),
                 value: main_fun,
             },
         );
+
         Self {
             builder,
             module,
-            context: ctx,
-            exec_engine,
-            func_map: fun_map,
-            var_map: HashMap::new(),
+            context,
+            fn_map,
         }
     }
-    fn get_type(&self, s: String) -> BasicTypeEnum<'a> {
+
+    fn get_type(&self, s: String) -> BasicTypeEnum<'ctx> {
         match s.as_str() {
             "int" => self.context.i64_type().into(),
             "float" => self.context.f64_type().into(),
@@ -68,10 +62,17 @@ impl<'a> Compiler<'a> {
             _ => unreachable!(),
         }
     }
-    pub fn compile(&mut self, ast: &[Expr]) {
+
+    pub fn compile(&mut self, ast: &[Expr], opt_level: OptimizationLevel) {
+        let main_fn = self.fn_map["__main__"];
+        let mut var_map = HashMap::new();
+
         for node in ast {
-            self.handle(node.clone());
+            self.handle(node.clone(), &mut var_map, main_fn);
         }
+
+        // just to be safe
+        self.builder.position_at_end(main_fn.block.unwrap());
 
         self.builder
             .build_return(Some(&self.context.i32_type().const_int(0, false)));
@@ -80,24 +81,55 @@ impl<'a> Compiler<'a> {
 
         Target::initialize_native(&InitializationConfig::default())
             .expect("Failed to initialize native target");
-        let triple = TargetMachine::get_default_triple();
-        let target = Target::from_triple(&triple).unwrap();
+        let target_triplet = TargetMachine::get_default_triple();
+        let target = Target::from_triple(&target_triplet).unwrap();
         let target_machine = target
             .create_target_machine(
-                &triple,
+                &target_triplet,
                 "generic", // cpu
-                "",        // features
-                OptimizationLevel::None,
-                RelocMode::PIC,
+                "",
+                opt_level,
+                RelocMode::Default,
                 CodeModel::Default,
             )
             .unwrap();
+
         target_machine
             .write_to_file(&self.module, FileType::Object, Path::new("./output.o"))
             .unwrap();
     }
+
+    pub fn jit_run(&mut self, ast: &[Expr], opt_level: OptimizationLevel) {
+        let main_fn = self.fn_map["__main__"];
+        let mut var_map = HashMap::new();
+
+        for node in ast {
+            self.handle(node.clone(), &mut var_map, main_fn);
+        }
+
+        // just to be safe
+        self.builder.position_at_end(main_fn.block.unwrap());
+
+        self.builder
+            .build_return(Some(&self.context.i32_type().const_int(0, false)));
+
+        self.module.print_to_stderr();
+
+        let exec_engine = self
+            .module
+            .create_jit_execution_engine(opt_level)
+            .expect("Failed to create execution engine");
+
+        unsafe { exec_engine.run_function_as_main(self.fn_map["__main__"].value, &[]) };
+    }
+
     /// Handle the node of AST
-    fn handle(&mut self, node: Expr) -> Value<'a> {
+    fn handle(
+        &mut self,
+        node: Expr,
+        var_map: &mut HashMap<String, Variable<'ctx>>,
+        current_function: FunctionVal,
+    ) -> Value<'ctx> {
         match node.inner {
             ExprKind::Int(i) => {
                 let integer = self.context.i64_type().const_int(i.unsigned_abs(), false);
@@ -108,30 +140,31 @@ impl<'a> Compiler<'a> {
                 Value::Float(float)
             }
             ExprKind::Ident(i) => {
-                let ident = self.var_map.get(&i).unwrap();
+                let ident = var_map.get(&i).unwrap();
                 // Get the variable value
                 match ident.clone().var_type {
                     BasicTypeEnum::FloatType(_) => Value::Float(
                         self.builder
-                            .build_load(ident.var_type, ident.value, "")
+                            .build_load(ident.var_type, ident.ptr, "")
                             .into_float_value(),
                     ),
                     BasicTypeEnum::IntType(_) => Value::Int(
                         self.builder
-                            .build_load(ident.var_type, ident.value, "")
+                            .build_load(ident.var_type, ident.ptr, "")
                             .into_int_value(),
                     ),
                     BasicTypeEnum::PointerType(_) => Value::Pointer(
                         self.builder
-                            .build_load(ident.var_type, ident.value, "")
+                            .build_load(ident.var_type, ident.ptr, "")
                             .into_pointer_value(),
                     ),
                     _ => todo!(),
                 }
             }
             ExprKind::Binary(left, op, right) => {
-                let left = self.handle(*left);
-                let right = self.handle(*right);
+                let left = self.handle(*left, var_map, current_function);
+                let right = self.handle(*right, var_map, current_function);
+
                 match op {
                     BinaryOp::Add => {
                         if left.is_float() {
@@ -239,89 +272,190 @@ impl<'a> Compiler<'a> {
                     )),
                 }
             }
+
             ExprKind::FunctionCall(name, params_) => match (*name).inner {
                 ExprKind::Ident(name) => {
-                    let fn_value = self.func_map.get(&name).unwrap().value;
+                    let function = *self.fn_map.get(&name).unwrap();
                     let mut params = Vec::new();
+
                     for param in params_ {
                         params.push(BasicMetadataValueEnum::from(
-                            self.handle(param).as_basic_value(),
+                            self.handle(param, var_map, function).as_basic_value(),
                         ))
                     }
-                    let t = self
+
+                    let return_value = self
                         .builder
-                        .build_call(fn_value, &params, "")
+                        .build_call(function.value, &params, "")
                         .try_as_basic_value()
                         .left();
-                    match t {
+
+                    match return_value {
                         Some(t) => match t {
-                            inkwell::values::BasicValueEnum::IntValue(i) => Value::Int(i),
-                            inkwell::values::BasicValueEnum::FloatValue(f) => Value::Float(f),
-                            inkwell::values::BasicValueEnum::PointerValue(p) => Value::Pointer(p),
+                            BasicValueEnum::IntValue(i) => Value::Int(i),
+                            BasicValueEnum::FloatValue(f) => Value::Float(f),
+                            BasicValueEnum::PointerValue(p) => Value::Pointer(p),
                             _ => unreachable!(),
                         },
+
                         None => Value::Int(self.context.i8_type().get_undef()),
                     }
                 }
+
                 _ => unreachable!(),
             },
+
             ExprKind::ExternFunction(name, params_ty, ret_ty, is_var) => {
                 let mut param_tys = Vec::new();
+
                 for p in params_ty {
-                    param_tys.push(BasicMetadataTypeEnum::from(self.get_type(p)));
+                    param_tys.push(self.get_type(p).into());
                 }
-                if let Some(ret) = ret_ty {
-                    let ty = self.get_type(ret);
-                    let fn_ty = ty.fn_type(&param_tys, is_var);
-                    let fn_value = self.module.add_function(&name, fn_ty, None);
-                    self.func_map.insert(
-                        name,
-                        FunctionVal {
-                            block: None,
-                            value: fn_value,
-                        },
-                    );
+
+                let fn_type = if let Some(ret_ty) = ret_ty {
+                    self.get_type(ret_ty).fn_type(&param_tys, is_var)
                 } else {
-                    let ty = self.context.void_type();
-                    let fn_ty = ty.fn_type(&param_tys, is_var);
-                    let fn_value = self.module.add_function(&name, fn_ty, None);
-                    self.func_map.insert(
-                        name,
-                        FunctionVal {
-                            block: None,
-                            value: fn_value,
-                        },
-                    );
-                }
+                    self.context.void_type().fn_type(&param_tys, is_var)
+                };
+
+                let function = self
+                    .module
+                    .add_function(&name, fn_type, Some(Linkage::External));
+
+                self.fn_map.insert(
+                    name,
+                    FunctionVal {
+                        value: function,
+                        block: None,
+                    },
+                );
+
                 Value::Int(self.context.i64_type().const_int(0, false))
             }
+
             ExprKind::Let(name, ty, val) => {
                 let ty = self.get_type(ty);
                 let var_alloca = self.builder.build_alloca(ty, &name);
                 if let Some(v) = *val {
-                    let val = self.handle(v).as_basic_value();
+                    let val = self.handle(v, var_map, current_function).as_basic_value();
                     self.builder.build_store(var_alloca, val);
                 }
-                self.var_map.insert(
+
+                var_map.insert(
                     name,
                     Variable {
-                        value: var_alloca,
+                        ptr: var_alloca,
                         var_type: ty,
                     },
                 );
+
                 Value::Int(self.context.i64_type().const_int(0, false))
             }
+
+            ExprKind::Function(name, args, return_type, inner) => {
+                let mut params = Vec::with_capacity(args.len());
+                let mut param_names = Vec::with_capacity(args.len());
+
+                for (arg_name, arg_type) in args.into_iter() {
+                    param_names.push(arg_name);
+                    params.push(self.get_type(arg_type));
+                }
+
+                let return_type = self.get_type(return_type.unwrap_or("void".into()));
+                let fn_type = return_type.fn_type(
+                    params
+                        .iter()
+                        .map(|i| i.clone().into())
+                        .collect::<Vec<_>>()
+                        .as_slice(),
+                    false,
+                );
+
+                let function = self.module.add_function(&name, fn_type, None);
+                let fn_entry = self.context.append_basic_block(function, "entry");
+
+                let function = FunctionVal {
+                    value: function,
+                    block: Some(fn_entry),
+                };
+
+                self.builder.position_at_end(fn_entry);
+
+                let mut function_scoped_var_map = var_map.clone();
+                for (param_idx, param_name) in param_names.into_iter().enumerate() {
+                    let param_value = function.value.get_nth_param(param_idx as _).unwrap();
+                    let param_type = params[param_idx];
+
+                    let param_ptr = self.builder.build_alloca(param_type, "");
+
+                    self.builder.build_store(param_ptr, param_value);
+
+                    function_scoped_var_map.insert(
+                        param_name,
+                        Variable {
+                            ptr: param_ptr,
+                            var_type: param_type,
+                        },
+                    );
+                }
+
+                for node in inner {
+                    self.handle(node, var_map, function);
+                }
+
+                Value::Int(self.context.i64_type().get_undef())
+            }
+
             ExprKind::Bool(b) => {
                 let bool = self.context.bool_type().const_int(b.into(), false);
                 Value::Bool(bool)
             }
+
             ExprKind::String(s) => {
                 let str = self
                     .builder
                     .build_global_string_ptr(s.trim_start_matches('"').trim_end_matches('"'), "")
                     .as_pointer_value();
+
                 Value::Pointer(str)
             }
+
+            ExprKind::If(condition, then_block, else_block) => {
+                let cmp = self.handle(*condition, var_map, current_function).as_bool();
+
+                let then_label = self
+                    .context
+                    .append_basic_block(current_function.value, "then_block");
+
+                self.builder.position_at_end(then_label);
+                for node in then_block {
+                    self.handle(node, var_map, current_function);
+                }
+
+                let else_label;
+                if let Some(else_block) = else_block {
+                    else_label = self
+                        .context
+                        .append_basic_block(current_function.value, "else_block");
+
+                    self.builder.position_at_end(else_label);
+                    for node in else_block {
+                        self.handle(node, var_map, current_function);
+                    }
+                } else {
+                    // if there's no else in the condition
+                    // assign else label to the entry block of the current function
+                    else_label = self.fn_map[current_function.value.get_name().to_str().unwrap()]
+                        .block
+                        .unwrap();
+                }
+
+                self.builder
+                    .build_conditional_branch(cmp, then_label, else_label);
+
+                Value::Int(self.context.i64_type().get_undef())
+            }
+
             _ => todo!(),
         }
     }

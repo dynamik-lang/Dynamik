@@ -34,7 +34,7 @@ extern "C" let var printf(string)
                 if checker.typecheck() {
                     let context = inkwell::context::Context::create();
                     let mut compiler = Compiler::new(&context);
-                    compiler.compile(&o);
+                    compiler.compile(&o, inkwell::OptimizationLevel::Aggressive);
                 };
             }
         }
