@@ -5,6 +5,7 @@ use super::types::*;
 use inkwell::{
     builder::Builder,
     context::Context,
+    execution_engine::{ExecutionEngine, FunctionLookupError, JitFunction, UnsafeFunctionPointer},
     module::{Linkage, Module},
     targets::{CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetMachine},
     types::{BasicType, BasicTypeEnum},
@@ -13,17 +14,20 @@ use inkwell::{
 };
 
 /// The root compiler
-pub struct Compiler<'a> {
-    pub(crate) context: &'a Context,
-    pub(crate) module: Module<'a>,
-    pub(crate) builder: Builder<'a>,
-    pub(crate) fn_map: HashMap<String, FunctionVal<'a>>,
+pub struct Compiler<'ctx> {
+    pub(crate) context: &'ctx Context,
+    pub(crate) module: Module<'ctx>,
+    pub(crate) exec_engine: ExecutionEngine<'ctx>,
+    pub(crate) builder: Builder<'ctx>,
+    pub(crate) fn_map: HashMap<String, FunctionVal<'ctx>>,
+    processed: bool,
 }
 
 impl<'ctx> Compiler<'ctx> {
     /// Create new compiler
-    pub fn new(context: &'ctx Context) -> Self {
+    pub fn new(context: &'ctx Context, opt_level: OptimizationLevel) -> Self {
         let module = context.create_module("dynamik");
+        let exec_engine = module.create_jit_execution_engine(opt_level).unwrap();
         let builder = context.create_builder();
         let main_fun_ty = context.i32_type().fn_type(&[], false);
         let main_fun = module.add_function("__main__", main_fun_ty, None);
@@ -46,6 +50,8 @@ impl<'ctx> Compiler<'ctx> {
             module,
             context,
             fn_map,
+            exec_engine,
+            processed: false,
         }
     }
 
@@ -63,7 +69,13 @@ impl<'ctx> Compiler<'ctx> {
         }
     }
 
-    pub fn compile(&mut self, ast: &[Expr], opt_level: OptimizationLevel) {
+    pub fn process(&mut self, ast: &[Expr]) -> Result<(), String> {
+        if self.processed {
+            return Err("Already processed".into());
+        }
+
+        self.processed = true;
+
         let main_fn = self.fn_map["__main__"];
         let mut var_map = HashMap::new();
 
@@ -71,7 +83,8 @@ impl<'ctx> Compiler<'ctx> {
             self.handle(node.clone(), &mut var_map, main_fn);
         }
 
-        // just to be safe
+        let main_fn = self.fn_map["__main__"];
+
         self.builder.position_at_end(main_fn.block.unwrap());
 
         self.builder
@@ -79,8 +92,13 @@ impl<'ctx> Compiler<'ctx> {
 
         self.module.print_to_stderr();
 
+        Ok(())
+    }
+
+    pub fn compile(&mut self, opt_level: OptimizationLevel) {
         Target::initialize_native(&InitializationConfig::default())
             .expect("Failed to initialize native target");
+
         let target_triplet = TargetMachine::get_default_triple();
         let target = Target::from_triple(&target_triplet).unwrap();
         let target_machine = target
@@ -89,7 +107,7 @@ impl<'ctx> Compiler<'ctx> {
                 "generic", // cpu
                 "",
                 opt_level,
-                RelocMode::Default,
+                RelocMode::PIC,
                 CodeModel::Default,
             )
             .unwrap();
@@ -99,28 +117,18 @@ impl<'ctx> Compiler<'ctx> {
             .unwrap();
     }
 
-    pub fn jit_run(&mut self, ast: &[Expr], opt_level: OptimizationLevel) {
-        let main_fn = self.fn_map["__main__"];
-        let mut var_map = HashMap::new();
+    pub fn get_jit_function<F: UnsafeFunctionPointer>(
+        &mut self,
+        fn_name: &str,
+    ) -> Result<JitFunction<'ctx, F>, FunctionLookupError> {
+        unsafe { self.exec_engine.get_function(fn_name) }
+    }
 
-        for node in ast {
-            self.handle(node.clone(), &mut var_map, main_fn);
-        }
-
-        // just to be safe
-        self.builder.position_at_end(main_fn.block.unwrap());
-
-        self.builder
-            .build_return(Some(&self.context.i32_type().const_int(0, false)));
-
-        self.module.print_to_stderr();
-
-        let exec_engine = self
-            .module
-            .create_jit_execution_engine(opt_level)
-            .expect("Failed to create execution engine");
-
-        unsafe { exec_engine.run_function_as_main(self.fn_map["__main__"].value, &[]) };
+    pub fn jit_run(&mut self) {
+        unsafe {
+            self.exec_engine
+                .run_function_as_main(self.fn_map["__main__"].value, &[])
+        };
     }
 
     /// Handle the node of AST
@@ -128,7 +136,7 @@ impl<'ctx> Compiler<'ctx> {
         &mut self,
         node: Expr,
         var_map: &mut HashMap<String, Variable<'ctx>>,
-        current_function: FunctionVal,
+        current_function: FunctionVal<'ctx>,
     ) -> Value<'ctx> {
         match node.inner {
             ExprKind::Int(i) => {
@@ -420,43 +428,69 @@ impl<'ctx> Compiler<'ctx> {
                 Value::Pointer(str)
             }
 
-            ExprKind::If(condition, then_block, else_block) => {
+            ExprKind::If(condition, then_ast, else_ast) => {
                 let cmp = self.handle(*condition, var_map, current_function).as_bool();
 
-                let then_label = self
+                let then_block = self
                     .context
-                    .append_basic_block(current_function.value, "then_block");
+                    .append_basic_block(current_function.value, "then");
+                let else_block = self
+                    .context
+                    .append_basic_block(current_function.value, "else");
+                let after_block = self
+                    .context
+                    .append_basic_block(current_function.value, "after");
 
-                self.builder.position_at_end(then_label);
-                for node in then_block {
+                self.builder
+                    .build_conditional_branch(cmp, then_block, else_block);
+
+                // then block
+                self.builder.position_at_end(then_block);
+                for node in then_ast {
                     self.handle(node, var_map, current_function);
                 }
 
-                let else_label;
-                if let Some(else_block) = else_block {
-                    else_label = self
-                        .context
-                        .append_basic_block(current_function.value, "else_block");
+                self.builder.build_unconditional_branch(after_block);
 
-                    self.builder.position_at_end(else_label);
-                    for node in else_block {
+                // else block
+                self.builder.position_at_end(else_block);
+                if let Some(else_ast) = else_ast {
+                    for node in else_ast {
                         self.handle(node, var_map, current_function);
                     }
-                } else {
-                    // if there's no else in the condition
-                    // assign else label to the entry block of the current function
-                    else_label = self.fn_map[current_function.value.get_name().to_str().unwrap()]
-                        .block
-                        .unwrap();
                 }
 
-                self.builder
-                    .build_conditional_branch(cmp, then_label, else_label);
+                self.builder.build_unconditional_branch(after_block);
+
+                // after block
+                self.builder.position_at_end(after_block);
+                *self
+                    .fn_map
+                    .get_mut("__main__")
+                    .unwrap()
+                    .block
+                    .as_mut()
+                    .unwrap() = after_block;
 
                 Value::Int(self.context.i64_type().get_undef())
             }
 
-            _ => todo!(),
+            ExprKind::Return(ret) => {
+                match ret.as_ref() {
+                    Some(r) => {
+                        let val = self.handle(r.clone(), var_map, current_function);
+                        self.builder.build_return(Some(&val.as_basic_value()));
+                    }
+
+                    _ => {
+                        self.builder.build_return(None);
+                    }
+                }
+
+                Value::Int(self.context.i64_type().get_undef())
+            }
+
+            i => unimplemented!("unimplemented: {i:?}"),
         }
     }
 }
