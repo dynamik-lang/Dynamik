@@ -30,7 +30,7 @@ impl<'ctx> Compiler<'ctx> {
         let exec_engine = module.create_jit_execution_engine(opt_level).unwrap();
         let builder = context.create_builder();
         let main_fun_ty = context.i32_type().fn_type(&[], false);
-        let main_fun = module.add_function("__main__", main_fun_ty, None);
+        let main_fun = module.add_function("main", main_fun_ty, None);
         let entry = context.append_basic_block(main_fun, "entry");
         builder.position_at_end(entry);
 
@@ -90,12 +90,12 @@ impl<'ctx> Compiler<'ctx> {
         self.builder
             .build_return(Some(&self.context.i32_type().const_int(0, false)));
 
-        self.module.print_to_stderr();
+        // self.module.print_to_stderr();
 
         Ok(())
     }
 
-    pub fn compile(&mut self, opt_level: OptimizationLevel) {
+    pub fn compile(&mut self, file_name: &str, opt_level: OptimizationLevel) {
         Target::initialize_native(&InitializationConfig::default())
             .expect("Failed to initialize native target");
 
@@ -113,7 +113,7 @@ impl<'ctx> Compiler<'ctx> {
             .unwrap();
 
         target_machine
-            .write_to_file(&self.module, FileType::Object, Path::new("./output.o"))
+            .write_to_file(&self.module, FileType::Object, Path::new(file_name))
             .unwrap();
     }
 

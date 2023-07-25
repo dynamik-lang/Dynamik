@@ -2,6 +2,7 @@ pub mod analyzer;
 pub mod llvm;
 pub mod parser;
 pub mod typechecker;
+pub mod cli;
 
 pub use llvm::Compiler;
 
