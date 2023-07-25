@@ -1,11 +1,10 @@
-mod analyzer;
-pub mod llvm;
-pub mod parser;
-use llvm::Compiler;
-mod typechecker;
-use std::ops::Range;
+use dynamik::analyzer;
+use dynamik::typechecker;
+use dynamik::parser;
 
-// use llvm::CodeGen;
+use dynamik::Compiler;
+
+use std::ops::Range;
 
 use crate::parser::*;
 use chumsky::{input::Stream, prelude::*};
@@ -15,6 +14,12 @@ use miette::{miette, LabeledSpan};
 fn main() {
     const SRC: &str = r#"
 extern "C" let var printf(string)
+let v1: int = 2;
+if v1 == 2 {
+    printf("v1 is two");
+} else {
+    printf("v1 is not two");
+}
 "#;
 
     let token_iter = LogosToken::lexer(SRC)
@@ -31,13 +36,17 @@ extern "C" let var printf(string)
             let mut analyzer = analyzer::Analyzer::new(o.clone(), SRC);
             if analyzer.analyze() {
                 let mut checker = typechecker::TypeChecker::new(o.clone(), SRC);
+
                 if checker.typecheck() {
                     let context = inkwell::context::Context::create();
-                    let mut compiler = Compiler::new(&context);
-                    compiler.compile(&o, inkwell::OptimizationLevel::Aggressive);
+                    let mut compiler = Compiler::new(&context, inkwell::OptimizationLevel::None);
+
+                    compiler.process(&o).unwrap();
+                    compiler.jit_run();
                 };
             }
         }
+
         Err(errs) => {
             for err in errs {
                 let span: Range<usize> = (*err.span()).into();
