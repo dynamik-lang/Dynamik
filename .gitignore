@@ -1,3 +1,5 @@
+.errorviz-version
+.vscode
 debug/
 target/
 Cargo.lock
