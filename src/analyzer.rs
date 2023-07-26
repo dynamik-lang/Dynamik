@@ -73,7 +73,7 @@ impl Analyzer {
             }
             ExprKind::FunctionCall(callee, params) => match callee.inner {
                 ExprKind::Ident(name) => {
-                    if let Some(ScopeVal::Function(size)) = self.get(name) {
+                    if let Some(ScopeVal::Function(size)) = self.get(name.clone()) {
                         if params.len() != size {
                             self.basic_err(
                                 format!(
@@ -84,6 +84,10 @@ impl Analyzer {
                                 ast.span,
                             )
                         }
+                    }
+                    else if let Some(ScopeVal::FunctionVariadic) = self.get(name) {
+                    } else {
+                        self.basic_err("Function not found".into(), ast.span)
                     }
                 }
                 _ => self.basic_err("This is not callable".into(), callee.span),

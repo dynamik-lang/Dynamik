@@ -226,7 +226,8 @@ impl<'ctx> Compiler<'ctx> {
                                 right.as_float(),
                                 "f_sub",
                             ))
-                        } else {
+                        }
+                         else {
                             Value::Int(self.builder.build_int_sub(
                                 left.as_int(),
                                 right.as_int(),

@@ -37,7 +37,12 @@ impl<'a> Value<'a> {
             _ => unreachable!(),
         }
     }
-
+    pub fn is_ptr(&self) -> bool {
+        match self {
+            Value::Pointer(_) => true,
+            _ => unreachable!(),
+        }
+    }
     pub(crate) fn as_bool(&self) -> IntValue<'a> {
         match self {
             Value::Bool(b) => b.clone(),

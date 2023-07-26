@@ -34,6 +34,8 @@ pub enum LogosToken<'a> {
     Comma,
     #[token(":")]
     Colon,
+    #[token("...")]
+    ThreeDots,
     #[token("=")]
     Eq,
     #[token("!")]
@@ -87,6 +89,8 @@ pub enum LogosToken<'a> {
     KwReturn,
     #[token("extern")]
     KwExtern,
+    #[token("while")]
+    KwWhile,
     Error,
 }
 impl<'a> fmt::Display for LogosToken<'a> {
@@ -97,6 +101,7 @@ impl<'a> fmt::Display for LogosToken<'a> {
             LogosToken::True => write!(f, "true"),
             LogosToken::False => write!(f, "false"),
             LogosToken::Bang => write!(f, "!"),
+            LogosToken::KwWhile => write!(f, "while"),
             LogosToken::String(_) => write!(f, "string"),
             LogosToken::Ident(_) => write!(f, "identifier"),
             LogosToken::Int(_) => write!(f, "integer"),
@@ -107,6 +112,7 @@ impl<'a> fmt::Display for LogosToken<'a> {
             LogosToken::KwLet => write!(f, "let"),
             LogosToken::KwElse => write!(f, "else"),
             LogosToken::KwIf => write!(f, "if"),
+            LogosToken::ThreeDots => write!(f, "..."),
             LogosToken::Semi => write!(f, ";"),
             LogosToken::LAngle => write!(f, "<"),
             LogosToken::RAngle => write!(f, ">"),
@@ -157,6 +163,8 @@ pub enum ExprKind {
     If(Box<Expr>, Vec<Expr>, Option<Vec<Expr>>), // IF <condition> <block> (else <block>)?
     ExternFunction(String, Vec<String>, Option<String>, bool),
     Return(Box<Option<Expr>>),
+    While(Box<Expr>, Vec<Expr>),
+    Assignment(String, Box<Expr>),
 }
 #[derive(Debug, Clone)]
 pub enum BinaryOp {
@@ -197,7 +205,41 @@ where
             let val = select! {
                 LogosToken::Int(i) => ExprKind::Int(i.parse().unwrap()),
                 LogosToken::Float(f) => ExprKind::Float(f.parse().unwrap()),
-                LogosToken::String(s) => ExprKind::String(s.to_string()),
+                LogosToken::String(s) =>{
+                  let mut result = String::new();
+                  let mut chars = s.chars().peekable();
+
+                  while let Some(ch) = chars.next() {
+                    if ch == '\\' {
+                      match chars.next() {
+                        Some('n') => result.push('\n'),
+                        Some('t') => result.push('\t'),
+                        Some('r') => result.push('\r'),
+                        Some('x') => {
+                            let mut hex = String::new();
+
+                            while let Some(digit) = chars.next() {
+                              if digit.is_ascii_hexdigit() {
+                                hex.push(digit);
+                              } else {
+                                break;
+                              }
+                            }
+
+                            if let Ok(value) = u32::from_str_radix(&hex, 16) {
+                              result.push(char::from_u32(value).unwrap());
+                            }
+                        },
+                        // Add more cases
+
+                        _ => result.push(ch), // Invalid escape, just keep char
+                      }
+                    } else {
+                      result.push(ch);
+                    }
+                  };
+                    ExprKind::String(result)
+                },
                 LogosToken::Ident(s) => ExprKind::Ident(s.to_string()),
                 LogosToken::True => ExprKind::Bool(true),
                 LogosToken::False => ExprKind::Bool(false),
@@ -341,26 +383,52 @@ where
         let extern_fn = just(LogosToken::KwExtern)
             .ignore_then(just(LogosToken::String("\"C\"")))
             .ignore_then(just(LogosToken::KwLet))
-            .ignore_then(just(LogosToken::Ident("var")).or_not().map(|v| v.is_some()))
-            .then(ident)
+            .ignore_then(ident)
+            .then_ignore(just(LogosToken::LParen))
             .then(
                 ident
                     .clone()
                     .separated_by(just(LogosToken::Comma))
                     .allow_trailing()
                     .collect::<Vec<_>>()
-                    .delimited_by(just(LogosToken::LParen), just(LogosToken::RParen)),
+                    .then(
+                        just(LogosToken::ThreeDots)
+                            .or_not()
+                            .map(|v| return v.is_some()),
+                    ),
             )
+            .then_ignore(just(LogosToken::RParen))
             .then(just(LogosToken::Arrow).ignore_then(ident).or_not())
-            .map_with_span(|(((is_var, name), param_types), return_type), span: Span| {
+            .map_with_span(|((name, (param_types, is_var)), return_type), span: Span| {
                 Expr::new(
                     span.into(),
-                    ExprKind::ExternFunction(name, param_types, return_type, is_var),
+                    ExprKind::ExternFunction(name.to_owned(), param_types, return_type, is_var),
+                )
+            });
+        let while_loop = just(LogosToken::KwWhile)
+            .ignore_then(inline.clone())
+            .then(
+                expr.repeated()
+                    .collect::<Vec<_>>()
+                    .delimited_by(just(LogosToken::LBrace), just(LogosToken::RBrace)),
+            )
+            .map_with_span(|(condition, body), span: Span| {
+                Expr::new(span.into(), ExprKind::While(Box::new(condition), body))
+            });
+        let assignment = ident
+            .then_ignore(just(LogosToken::Eq))
+            .then(inline.clone())
+            .map_with_span(|(name, expr), span: Span| {
+                Expr::new(
+                    span.into(),
+                    ExprKind::Assignment(name.to_string(), Box::new(expr)),
                 )
             });
         function
             .or(extern_fn)
+            .or(while_loop)
             .or(return_expr)
+            .or(assignment)
             .or(let_expr)
             .or(if_expr)
             .or(inline)
