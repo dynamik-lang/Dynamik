@@ -1,3 +1,2 @@
-while 1 > 4 {
-    let a: int = 6
-}
+extern "C" let printf(string, ...);
+printf("hello world\n");

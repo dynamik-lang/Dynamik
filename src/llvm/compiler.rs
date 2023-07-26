@@ -90,7 +90,7 @@ impl<'ctx> Compiler<'ctx> {
         self.builder
             .build_return(Some(&self.context.i32_type().const_int(0, false)));
 
-        // self.module.print_to_stderr();
+        // let _ = self.module.print_to_file("output.ll");
 
         Ok(())
     }
@@ -226,8 +226,7 @@ impl<'ctx> Compiler<'ctx> {
                                 right.as_float(),
                                 "f_sub",
                             ))
-                        }
-                         else {
+                        } else {
                             Value::Int(self.builder.build_int_sub(
                                 left.as_int(),
                                 right.as_int(),
@@ -487,6 +486,56 @@ impl<'ctx> Compiler<'ctx> {
                         self.builder.build_return(None);
                     }
                 }
+
+                Value::Int(self.context.i64_type().get_undef())
+            }
+
+            ExprKind::Assignment(var_name, val) => {
+                let val = self.handle(*val, var_map, current_function);
+                let variable_alloca = var_map[&var_name].ptr;
+
+                self.builder
+                    .build_store(variable_alloca, val.as_basic_value());
+
+                Value::Int(self.context.i64_type().get_undef())
+            }
+
+            ExprKind::While(condition, inner) => {
+                let loop_start_block = self
+                    .context
+                    .append_basic_block(current_function.value, "loop_start");
+                let loop_continute_block = self
+                    .context
+                    .append_basic_block(current_function.value, "loop_continue");
+                let after_block = self
+                    .context
+                    .append_basic_block(current_function.value, "after");
+
+                self.builder.build_unconditional_branch(loop_start_block);
+
+                // loop start block
+                self.builder.position_at_end(loop_start_block);
+                let cmp = self.handle(*condition, var_map, current_function).as_bool();
+                self.builder
+                    .build_conditional_branch(cmp, loop_continute_block, after_block);
+
+                // loop continue block
+                self.builder.position_at_end(loop_continute_block);
+                for node in inner {
+                    self.handle(node, var_map, current_function);
+                }
+
+                self.builder.build_unconditional_branch(loop_start_block);
+
+                // loop after block
+                self.builder.position_at_end(after_block);
+                *self
+                    .fn_map
+                    .get_mut("__main__")
+                    .unwrap()
+                    .block
+                    .as_mut()
+                    .unwrap() = after_block;
 
                 Value::Int(self.context.i64_type().get_undef())
             }
