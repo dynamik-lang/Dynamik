@@ -91,6 +91,8 @@ pub enum LogosToken<'a> {
     KwExtern,
     #[token("while")]
     KwWhile,
+    #[token("mod")]
+    KwMod,
     Error,
 }
 impl<'a> fmt::Display for LogosToken<'a> {
@@ -112,6 +114,7 @@ impl<'a> fmt::Display for LogosToken<'a> {
             LogosToken::KwLet => write!(f, "let"),
             LogosToken::KwElse => write!(f, "else"),
             LogosToken::KwIf => write!(f, "if"),
+            LogosToken::KwMod => write!(f, "mod"),
             LogosToken::ThreeDots => write!(f, "..."),
             LogosToken::Semi => write!(f, ";"),
             LogosToken::LAngle => write!(f, "<"),
@@ -164,6 +167,7 @@ pub enum ExprKind {
     ExternFunction(String, Vec<String>, Option<String>, bool),
     Return(Box<Option<Expr>>),
     While(Box<Expr>, Vec<Expr>),
+    Mod(String, Vec<Expr>),
     Assignment(String, Box<Expr>),
 }
 #[derive(Debug, Clone)]
@@ -218,7 +222,7 @@ where
                         Some('x') => {
                             let mut hex = String::new();
 
-                            while let Some(digit) = chars.next() {
+                            for digit in chars.by_ref() {
                               if digit.is_ascii_hexdigit() {
                                 hex.push(digit);
                               } else {
@@ -323,6 +327,19 @@ where
         let ident = select! {
             LogosToken::Ident(name) => name.to_string()
         };
+
+        let mod_expr = just(LogosToken::KwMod)
+            .ignore_then(ident)
+            .then(
+                expr.clone()
+                    .repeated()
+                    .collect::<Vec<_>>()
+                    .delimited_by(just(LogosToken::LBrace), just(LogosToken::RBrace)),
+            )
+            .map_with_span(|(name, body), span: Span| {
+                Expr::new(span.into(), ExprKind::Mod(name, body))
+            });
+
         let let_expr = just(LogosToken::KwLet)
             .ignore_then(ident)
             .then_ignore(just(LogosToken::Colon))
@@ -426,6 +443,7 @@ where
             });
         function
             .or(extern_fn)
+            .or(mod_expr)
             .or(while_loop)
             .or(return_expr)
             .or(assignment)
