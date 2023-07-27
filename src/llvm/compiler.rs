@@ -1,12 +1,17 @@
 use crate::parser::{BinaryOp, Expr, ExprKind};
 use std::{collections::HashMap, path::Path};
 
+use super::modules::*;
 use super::types::*;
+
+const MAIN_FN: &str = "__main__";
+
+use inkwell::module::Module;
 use inkwell::{
     builder::Builder,
     context::Context,
     execution_engine::{ExecutionEngine, FunctionLookupError, JitFunction, UnsafeFunctionPointer},
-    module::{Linkage, Module},
+    module::Linkage,
     targets::{CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetMachine},
     types::{BasicType, BasicTypeEnum},
     values::{BasicMetadataValueEnum, BasicValueEnum},
@@ -16,41 +21,55 @@ use inkwell::{
 /// The root compiler
 pub struct Compiler<'ctx> {
     pub(crate) context: &'ctx Context,
-    pub(crate) module: Module<'ctx>,
+    pub(crate) target_machine: TargetMachine,
     pub(crate) exec_engine: ExecutionEngine<'ctx>,
+    pub(crate) merged_module: Module<'ctx>,
     pub(crate) builder: Builder<'ctx>,
-    pub(crate) fn_map: HashMap<String, FunctionVal<'ctx>>,
+    pub(crate) fn_mod: FunctionModule<'ctx>,
     processed: bool,
 }
 
 impl<'ctx> Compiler<'ctx> {
     /// Create new compiler
     pub fn new(context: &'ctx Context, opt_level: OptimizationLevel) -> Self {
-        let module = context.create_module("dynamik");
-        let exec_engine = module.create_jit_execution_engine(opt_level).unwrap();
+        let merged_module = context.create_module("__merged__mode__");
+        let exec_engine = merged_module
+            .create_jit_execution_engine(opt_level)
+            .unwrap();
         let builder = context.create_builder();
-        let main_fun_ty = context.i32_type().fn_type(&[], false);
-        let main_fun = module.add_function("main", main_fun_ty, None);
-        let entry = context.append_basic_block(main_fun, "entry");
+
+        let target_triplet = TargetMachine::get_default_triple();
+        let target = Target::from_triple(&target_triplet).unwrap();
+        let target_machine = target
+            .create_target_machine(
+                &target_triplet,
+                "generic", // cpu
+                "",
+                opt_level,
+                RelocMode::PIC,
+                CodeModel::Default,
+            )
+            .unwrap();
+
+        merged_module.set_data_layout(&target_machine.get_target_data().get_data_layout());
+
+        let fn_mod = FunctionModule::new(context);
+
+        let main_fn_ty = context.i32_type().fn_type(&[], false);
+        let main_fn = fn_mod
+            .append_function(BASE_MOD, "__main__", main_fn_ty, None)
+            .unwrap();
+        let entry = context.append_basic_block(main_fn, "entry");
+
         builder.position_at_end(entry);
-
-        let mut fn_map = HashMap::new();
-
-        // Creating the function
-        fn_map.insert(
-            "__main__".into(),
-            FunctionVal {
-                block: Some(entry),
-                value: main_fun,
-            },
-        );
 
         Self {
             builder,
-            module,
+            target_machine,
+            merged_module,
             context,
-            fn_map,
             exec_engine,
+            fn_mod,
             processed: false,
         }
     }
@@ -76,19 +95,32 @@ impl<'ctx> Compiler<'ctx> {
 
         self.processed = true;
 
-        let main_fn = self.fn_map["__main__"];
+        let main_fn = self.fn_mod.get_function(BASE_MOD, MAIN_FN).unwrap();
+
         let mut var_map = HashMap::new();
 
         for node in ast {
-            self.handle(node.clone(), &mut var_map, main_fn);
+            self.handle(
+                node.clone(),
+                &mut var_map,
+                BASE_MOD,
+                FunctionVal {
+                    block: main_fn.get_last_basic_block(),
+                    value: main_fn,
+                },
+            );
         }
 
-        let main_fn = self.fn_map["__main__"];
-
-        self.builder.position_at_end(main_fn.block.unwrap());
-
+        self.builder
+            .position_at_end(main_fn.get_last_basic_block().unwrap());
         self.builder
             .build_return(Some(&self.context.i32_type().const_int(0, false)));
+
+        for module in self.fn_mod.get_modules() {
+            self.merged_module.link_in_module(module);
+        }
+
+        self.merged_module.verify().unwrap();
 
         // let _ = self.module.print_to_file("output.ll");
 
@@ -96,24 +128,8 @@ impl<'ctx> Compiler<'ctx> {
     }
 
     pub fn compile(&mut self, file_name: &str, opt_level: OptimizationLevel) {
-        Target::initialize_native(&InitializationConfig::default())
-            .expect("Failed to initialize native target");
-
-        let target_triplet = TargetMachine::get_default_triple();
-        let target = Target::from_triple(&target_triplet).unwrap();
-        let target_machine = target
-            .create_target_machine(
-                &target_triplet,
-                "generic", // cpu
-                "",
-                opt_level,
-                RelocMode::PIC,
-                CodeModel::Default,
-            )
-            .unwrap();
-
-        target_machine
-            .write_to_file(&self.module, FileType::Object, Path::new(file_name))
+        self.target_machine
+            .write_to_file(&self.merged_module, FileType::Object, Path::new(file_name))
             .unwrap();
     }
 
@@ -121,13 +137,18 @@ impl<'ctx> Compiler<'ctx> {
         &mut self,
         fn_name: &str,
     ) -> Result<JitFunction<'ctx, F>, FunctionLookupError> {
+        if !self.processed {
+            panic!("Not processed");
+        }
+
         unsafe { self.exec_engine.get_function(fn_name) }
     }
 
     pub fn jit_run(&mut self) {
+        self.merged_module.print_to_stderr();
         unsafe {
             self.exec_engine
-                .run_function_as_main(self.fn_map["__main__"].value, &[])
+                .run_function_as_main(self.merged_module.get_function("main").unwrap(), &[])
         };
     }
 
@@ -136,6 +157,7 @@ impl<'ctx> Compiler<'ctx> {
         &mut self,
         node: Expr,
         var_map: &mut HashMap<String, Variable<'ctx>>,
+        current_mod: &str,
         current_function: FunctionVal<'ctx>,
     ) -> Value<'ctx> {
         match node.inner {
@@ -170,8 +192,8 @@ impl<'ctx> Compiler<'ctx> {
                 }
             }
             ExprKind::Binary(left, op, right) => {
-                let left = self.handle(*left, var_map, current_function);
-                let right = self.handle(*right, var_map, current_function);
+                let left = self.handle(*left, var_map, current_mod, current_function);
+                let right = self.handle(*right, var_map, current_mod, current_function);
 
                 match op {
                     BinaryOp::Add => {
@@ -283,18 +305,27 @@ impl<'ctx> Compiler<'ctx> {
 
             ExprKind::FunctionCall(name, params_) => match (*name).inner {
                 ExprKind::Ident(name) => {
-                    let function = *self.fn_map.get(&name).unwrap();
+                    let function = self.fn_mod.get_function(&current_mod, &name).unwrap();
                     let mut params = Vec::new();
 
                     for param in params_ {
                         params.push(BasicMetadataValueEnum::from(
-                            self.handle(param, var_map, function).as_basic_value(),
-                        ))
+                            self.handle(
+                                param,
+                                var_map,
+                                current_mod,
+                                FunctionVal {
+                                    block: function.get_last_basic_block(),
+                                    value: function,
+                                },
+                            )
+                            .as_basic_value(),
+                        ));
                     }
 
                     let return_value = self
                         .builder
-                        .build_call(function.value, &params, "")
+                        .build_call(function, &params, "")
                         .try_as_basic_value()
                         .left();
 
@@ -326,17 +357,8 @@ impl<'ctx> Compiler<'ctx> {
                     self.context.void_type().fn_type(&param_tys, is_var)
                 };
 
-                let function = self
-                    .module
-                    .add_function(&name, fn_type, Some(Linkage::External));
-
-                self.fn_map.insert(
-                    name,
-                    FunctionVal {
-                        value: function,
-                        block: None,
-                    },
-                );
+                self.fn_mod
+                    .append_function(&current_mod, &name, fn_type, Some(Linkage::External));
 
                 Value::Int(self.context.i64_type().const_int(0, false))
             }
@@ -345,7 +367,9 @@ impl<'ctx> Compiler<'ctx> {
                 let ty = self.get_type(ty);
                 let var_alloca = self.builder.build_alloca(ty, &name);
                 if let Some(v) = *val {
-                    let val = self.handle(v, var_map, current_function).as_basic_value();
+                    let val = self
+                        .handle(v, var_map, current_mod, current_function)
+                        .as_basic_value();
                     self.builder.build_store(var_alloca, val);
                 }
 
@@ -379,19 +403,17 @@ impl<'ctx> Compiler<'ctx> {
                     false,
                 );
 
-                let function = self.module.add_function(&name, fn_type, None);
+                let function = self
+                    .fn_mod
+                    .append_function(&current_mod, &name, fn_type, None)
+                    .unwrap();
                 let fn_entry = self.context.append_basic_block(function, "entry");
-
-                let function = FunctionVal {
-                    value: function,
-                    block: Some(fn_entry),
-                };
 
                 self.builder.position_at_end(fn_entry);
 
                 let mut function_scoped_var_map = var_map.clone();
                 for (param_idx, param_name) in param_names.into_iter().enumerate() {
-                    let param_value = function.value.get_nth_param(param_idx as _).unwrap();
+                    let param_value = function.get_nth_param(param_idx as _).unwrap();
                     let param_type = params[param_idx];
 
                     let param_ptr = self.builder.build_alloca(param_type, "");
@@ -408,7 +430,15 @@ impl<'ctx> Compiler<'ctx> {
                 }
 
                 for node in inner {
-                    self.handle(node, var_map, function);
+                    self.handle(
+                        node,
+                        var_map,
+                        current_mod,
+                        FunctionVal {
+                            block: function.get_last_basic_block(),
+                            value: function,
+                        },
+                    );
                 }
 
                 Value::Int(self.context.i64_type().get_undef())
@@ -429,7 +459,9 @@ impl<'ctx> Compiler<'ctx> {
             }
 
             ExprKind::If(condition, then_ast, else_ast) => {
-                let cmp = self.handle(*condition, var_map, current_function).as_bool();
+                let cmp = self
+                    .handle(*condition, var_map, current_mod, current_function)
+                    .as_bool();
 
                 let then_block = self
                     .context
@@ -447,7 +479,7 @@ impl<'ctx> Compiler<'ctx> {
                 // then block
                 self.builder.position_at_end(then_block);
                 for node in then_ast {
-                    self.handle(node, var_map, current_function);
+                    self.handle(node, var_map, current_mod, current_function);
                 }
 
                 self.builder.build_unconditional_branch(after_block);
@@ -456,7 +488,7 @@ impl<'ctx> Compiler<'ctx> {
                 self.builder.position_at_end(else_block);
                 if let Some(else_ast) = else_ast {
                     for node in else_ast {
-                        self.handle(node, var_map, current_function);
+                        self.handle(node, var_map, current_mod, current_function);
                     }
                 }
 
@@ -464,13 +496,6 @@ impl<'ctx> Compiler<'ctx> {
 
                 // after block
                 self.builder.position_at_end(after_block);
-                *self
-                    .fn_map
-                    .get_mut("__main__")
-                    .unwrap()
-                    .block
-                    .as_mut()
-                    .unwrap() = after_block;
 
                 Value::Int(self.context.i64_type().get_undef())
             }
@@ -478,7 +503,7 @@ impl<'ctx> Compiler<'ctx> {
             ExprKind::Return(ret) => {
                 match ret.as_ref() {
                     Some(r) => {
-                        let val = self.handle(r.clone(), var_map, current_function);
+                        let val = self.handle(r.clone(), var_map, current_mod, current_function);
                         self.builder.build_return(Some(&val.as_basic_value()));
                     }
 
@@ -491,7 +516,7 @@ impl<'ctx> Compiler<'ctx> {
             }
 
             ExprKind::Assignment(var_name, val) => {
-                let val = self.handle(*val, var_map, current_function);
+                let val = self.handle(*val, var_map, current_mod, current_function);
                 let variable_alloca = var_map[&var_name].ptr;
 
                 self.builder
@@ -515,31 +540,27 @@ impl<'ctx> Compiler<'ctx> {
 
                 // loop start block
                 self.builder.position_at_end(loop_start_block);
-                let cmp = self.handle(*condition, var_map, current_function).as_bool();
+                let cmp = self
+                    .handle(*condition, var_map, current_mod, current_function)
+                    .as_bool();
                 self.builder
                     .build_conditional_branch(cmp, loop_continute_block, after_block);
 
                 // loop continue block
                 self.builder.position_at_end(loop_continute_block);
                 for node in inner {
-                    self.handle(node, var_map, current_function);
+                    self.handle(node, var_map, current_mod, current_function);
                 }
 
                 self.builder.build_unconditional_branch(loop_start_block);
 
                 // loop after block
                 self.builder.position_at_end(after_block);
-                *self
-                    .fn_map
-                    .get_mut("__main__")
-                    .unwrap()
-                    .block
-                    .as_mut()
-                    .unwrap() = after_block;
 
                 Value::Int(self.context.i64_type().get_undef())
             }
 
+            // ExprKind::Mod(, )
             i => unimplemented!("unimplemented: {i:?}"),
         }
     }
