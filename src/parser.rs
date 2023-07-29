@@ -3,7 +3,7 @@ use std::{
     ops::Range,
 };
 
-use chumsky::{input::ValueInput, prelude::*};
+use chumsky::{input::{ValueInput, Stream}, prelude::*};
 use logos::Logos;
 
 pub type Span = SimpleSpan<usize>;
@@ -36,6 +36,8 @@ pub enum LogosToken<'a> {
     Colon,
     #[token("...")]
     ThreeDots,
+    #[token("::")]
+    FourDots,
     #[token("=")]
     Eq,
     #[token("!")]
@@ -102,6 +104,7 @@ impl<'a> fmt::Display for LogosToken<'a> {
             LogosToken::Or => write!(f, "||"),
             LogosToken::True => write!(f, "true"),
             LogosToken::False => write!(f, "false"),
+            LogosToken::FourDots => write!(f, "::"),
             LogosToken::Bang => write!(f, "!"),
             LogosToken::KwWhile => write!(f, "while"),
             LogosToken::String(_) => write!(f, "string"),
@@ -152,6 +155,7 @@ impl Expr {
         Expr { inner, span }
     }
 }
+
 #[derive(Debug, Clone)]
 pub enum ExprKind {
     Int(i64),
@@ -161,7 +165,7 @@ pub enum ExprKind {
     Ident(String),
     Binary(Box<Expr>, BinaryOp, Box<Expr>),
     Let(String, String, Box<Option<Expr>>),
-    FunctionCall(Box<Expr>, Vec<Expr>),
+    FunctionCall(Option<String>, String, Vec<Expr>),
     Function(String, Vec<(String, String)>, Option<String>, Vec<Expr>),
     If(Box<Expr>, Vec<Expr>, Option<Vec<Expr>>), // IF <condition> <block> (else <block>)?
     ExternFunction(String, Vec<String>, Option<String>, bool),
@@ -200,12 +204,17 @@ impl BinaryOp {
         }
     }
 }
+
 pub fn parser<'a, I>() -> impl Parser<'a, I, Vec<Expr>, extra::Err<Rich<'a, LogosToken<'a>>>>
 where
     I: ValueInput<'a, Token = LogosToken<'a>, Span = SimpleSpan>,
 {
     recursive(|expr| {
         let inline = recursive(|e| {
+            let ident = select! {
+                LogosToken::Ident(name) => name.to_string()
+            };
+    
             let val = select! {
                 LogosToken::Int(i) => ExprKind::Int(i.parse().unwrap()),
                 LogosToken::Float(f) => ExprKind::Float(f.parse().unwrap()),
@@ -260,17 +269,13 @@ where
                 .separated_by(just(LogosToken::Comma))
                 .allow_trailing()
                 .collect::<Vec<_>>();
-            let call = val.clone().foldl(
-                items
-                    .delimited_by(just(LogosToken::LParen), just(LogosToken::RParen))
-                    .map_with_span(|args, span: Span| (args, span))
-                    .repeated(),
-                |f, (args, span)| {
-                    let span = f.span.start..span.end;
-                    Expr::new(span, ExprKind::FunctionCall(Box::new(f), args))
-                },
-            );
-            let product = call.clone().foldl(
+            let four_dots = ident.then(just(LogosToken::FourDots).ignore_then(ident).or_not()).map(|(name, module)| (name, module));
+            let call = four_dots.clone().then(items
+                .delimited_by(just(LogosToken::LParen), just(LogosToken::RParen))
+            ).map_with_span(|((name, module), args), span: Span| {
+                Expr::new(span.into(), ExprKind::FunctionCall(module, name, args))
+            });
+            let product = val.clone().foldl(
                 op.then(val)
                     .map_with_span(|a, span: Span| (a, span))
                     .repeated(),
@@ -454,4 +459,21 @@ where
     })
     .repeated()
     .collect::<Vec<Expr>>()
+}
+
+#[test]
+fn b() {
+    let src = "hamza::call()";
+    let token_iter = LogosToken::lexer(&src)
+        .spanned()
+        .map(|(tok, span)| match tok {
+            Ok(tok) => (tok, span.into()),
+            Err(()) => (LogosToken::Error, span.into()),
+        });
+
+    let token_stream = Stream::from_iter(token_iter)
+        .spanned::<LogosToken, SimpleSpan>((src.len()..src.len()).into());
+
+    let p = parser().parse(token_stream);
+    println!("{:?}", p.output())
 }
