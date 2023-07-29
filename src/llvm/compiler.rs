@@ -303,46 +303,44 @@ impl<'ctx> Compiler<'ctx> {
                 }
             }
 
-            ExprKind::FunctionCall(name, params_) => match (*name).inner {
-                ExprKind::Ident(name) => {
-                    let function = self.fn_mod.get_function(&current_mod, &name).unwrap();
-                    let mut params = Vec::new();
+            ExprKind::FunctionCall(mod_name, name, params_) => {
+                let mod_name = mod_name.unwrap_or(BASE_MOD.into());
 
-                    for param in params_ {
-                        params.push(BasicMetadataValueEnum::from(
-                            self.handle(
-                                param,
-                                var_map,
-                                current_mod,
-                                FunctionVal {
-                                    block: function.get_last_basic_block(),
-                                    value: function,
-                                },
-                            )
-                            .as_basic_value(),
-                        ));
-                    }
+                let function = self.fn_mod.get_function(&mod_name, &name).unwrap();
+                let mut params = Vec::new();
 
-                    let return_value = self
-                        .builder
-                        .build_call(function, &params, "")
-                        .try_as_basic_value()
-                        .left();
-
-                    match return_value {
-                        Some(t) => match t {
-                            BasicValueEnum::IntValue(i) => Value::Int(i),
-                            BasicValueEnum::FloatValue(f) => Value::Float(f),
-                            BasicValueEnum::PointerValue(p) => Value::Pointer(p),
-                            _ => unreachable!(),
-                        },
-
-                        None => Value::Int(self.context.i8_type().get_undef()),
-                    }
+                for param in params_ {
+                    params.push(BasicMetadataValueEnum::from(
+                        self.handle(
+                            param,
+                            var_map,
+                            current_mod,
+                            FunctionVal {
+                                block: function.get_last_basic_block(),
+                                value: function,
+                            },
+                        )
+                        .as_basic_value(),
+                    ));
                 }
 
-                _ => unreachable!(),
-            },
+                let return_value = self
+                    .builder
+                    .build_call(function, &params, "")
+                    .try_as_basic_value()
+                    .left();
+
+                match return_value {
+                    Some(t) => match t {
+                        BasicValueEnum::IntValue(i) => Value::Int(i),
+                        BasicValueEnum::FloatValue(f) => Value::Float(f),
+                        BasicValueEnum::PointerValue(p) => Value::Pointer(p),
+                        _ => unreachable!(),
+                    },
+
+                    None => Value::Int(self.context.i8_type().get_undef()),
+                }
+            }
 
             ExprKind::ExternFunction(name, params_ty, ret_ty, is_var) => {
                 let mut param_tys = Vec::new();

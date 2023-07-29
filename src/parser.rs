@@ -325,7 +325,7 @@ where
                         ExprKind::Binary(Box::new(lhs), op, Box::new(rhs)),
                     )
                 });
-            expr_
+           call.or(expr_)
                 .clone()
                 .or(expr_.delimited_by(just(LogosToken::LParen), just(LogosToken::RParen)))
         });
