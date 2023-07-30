@@ -1,3 +1,5 @@
+#![allow(unused, unreachable_code, unreachable_patterns, dead_code)]
+
 pub mod analyzer;
 pub mod llvm;
 pub mod parser;
