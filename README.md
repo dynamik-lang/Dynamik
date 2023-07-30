@@ -133,9 +133,3 @@ In this example, we create a module named `math`. The module contains a function
 ```dynamik
 printf("1 + 2 = %d\n", math::add(1, 2));
 ```
-
-## TODO:
-- [x] CLI
-- [ ] compiler: add "string" type support
-- [ ] compiler: treat function return as a value (only in let statement right now)
-- [ ] compiler: function as value
