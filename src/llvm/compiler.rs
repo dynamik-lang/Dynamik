@@ -1,18 +1,19 @@
 use crate::parser::{BinaryOp, Expr, ExprKind};
 use std::{collections::HashMap, path::Path};
 
-use super::modules::*;
 use super::types::*;
 
-const MAIN_FN: &str = "__main__";
+const BASE_MOD: &str = "__base__";
+const MAIN_FN: &str = "__base__::__main__";
 
 use inkwell::module::Module;
+use inkwell::values::FunctionValue;
 use inkwell::{
     builder::Builder,
     context::Context,
     execution_engine::{ExecutionEngine, FunctionLookupError, JitFunction, UnsafeFunctionPointer},
     module::Linkage,
-    targets::{CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetMachine},
+    targets::{CodeModel, FileType, RelocMode, Target, TargetMachine},
     types::{BasicType, BasicTypeEnum},
     values::{BasicMetadataValueEnum, BasicValueEnum},
     AddressSpace, OptimizationLevel,
@@ -21,21 +22,19 @@ use inkwell::{
 /// The root compiler
 pub struct Compiler<'ctx> {
     pub(crate) context: &'ctx Context,
+    pub(crate) module: Module<'ctx>,
     pub(crate) target_machine: TargetMachine,
     pub(crate) exec_engine: ExecutionEngine<'ctx>,
-    pub(crate) merged_module: Module<'ctx>,
     pub(crate) builder: Builder<'ctx>,
-    pub(crate) fn_mod: FunctionModule<'ctx>,
+    pub(crate) fn_map: HashMap<String, FunctionValue<'ctx>>,
     processed: bool,
 }
 
 impl<'ctx> Compiler<'ctx> {
     /// Create new compiler
     pub fn new(context: &'ctx Context, opt_level: OptimizationLevel) -> Self {
-        let merged_module = context.create_module("__merged__mode__");
-        let exec_engine = merged_module
-            .create_jit_execution_engine(opt_level)
-            .unwrap();
+        let module = context.create_module("dynamik");
+        let exec_engine = module.create_jit_execution_engine(opt_level).unwrap();
         let builder = context.create_builder();
 
         let target_triplet = TargetMachine::get_default_triple();
@@ -51,25 +50,23 @@ impl<'ctx> Compiler<'ctx> {
             )
             .unwrap();
 
-        merged_module.set_data_layout(&target_machine.get_target_data().get_data_layout());
-
-        let fn_mod = FunctionModule::new(context);
+        let mut fn_map = HashMap::new();
 
         let main_fn_ty = context.i32_type().fn_type(&[], false);
-        let main_fn = fn_mod
-            .append_function(BASE_MOD, "__main__", main_fn_ty, None)
-            .unwrap();
+        let main_fn = module.add_function("main", main_fn_ty, None);
         let entry = context.append_basic_block(main_fn, "entry");
 
         builder.position_at_end(entry);
 
+        fn_map.insert(MAIN_FN.to_string(), main_fn);
+
         Self {
             builder,
             target_machine,
-            merged_module,
+            fn_map,
+            module,
             context,
             exec_engine,
-            fn_mod,
             processed: false,
         }
     }
@@ -95,7 +92,7 @@ impl<'ctx> Compiler<'ctx> {
 
         self.processed = true;
 
-        let main_fn = self.fn_mod.get_function(BASE_MOD, MAIN_FN).unwrap();
+        let main_fn = self.fn_map[MAIN_FN];
 
         let mut var_map = HashMap::new();
 
@@ -116,20 +113,14 @@ impl<'ctx> Compiler<'ctx> {
         self.builder
             .build_return(Some(&self.context.i32_type().const_int(0, false)));
 
-        for module in self.fn_mod.get_modules() {
-            self.merged_module.link_in_module(module);
-        }
-
-        self.merged_module.verify().unwrap();
-
         // let _ = self.module.print_to_file("output.ll");
 
         Ok(())
     }
 
-    pub fn compile(&mut self, file_name: &str, opt_level: OptimizationLevel) {
+    pub fn compile(&mut self, file_name: &str, _opt_level: OptimizationLevel) {
         self.target_machine
-            .write_to_file(&self.merged_module, FileType::Object, Path::new(file_name))
+            .write_to_file(&self.module, FileType::Object, Path::new(file_name))
             .unwrap();
     }
 
@@ -145,10 +136,10 @@ impl<'ctx> Compiler<'ctx> {
     }
 
     pub fn jit_run(&mut self) {
-        self.merged_module.print_to_stderr();
+        // self.merged_module.print_to_stderr();
         unsafe {
             self.exec_engine
-                .run_function_as_main(self.merged_module.get_function("main").unwrap(), &[])
+                .run_function_as_main(self.module.get_function("main").unwrap(), &[])
         };
     }
 
@@ -170,24 +161,28 @@ impl<'ctx> Compiler<'ctx> {
                 Value::Float(float)
             }
             ExprKind::Ident(i) => {
+                // println!("{i:?}");
                 let ident = var_map.get(&i).unwrap();
                 // Get the variable value
-                match ident.clone().var_type {
+                match ident.var_type {
                     BasicTypeEnum::FloatType(_) => Value::Float(
                         self.builder
                             .build_load(ident.var_type, ident.ptr, "")
                             .into_float_value(),
                     ),
+
                     BasicTypeEnum::IntType(_) => Value::Int(
                         self.builder
                             .build_load(ident.var_type, ident.ptr, "")
                             .into_int_value(),
                     ),
+
                     BasicTypeEnum::PointerType(_) => Value::Pointer(
                         self.builder
                             .build_load(ident.var_type, ident.ptr, "")
                             .into_pointer_value(),
                     ),
+
                     _ => todo!(),
                 }
             }
@@ -304,9 +299,10 @@ impl<'ctx> Compiler<'ctx> {
             }
 
             ExprKind::FunctionCall(mod_name, name, params_) => {
-                let mod_name = mod_name.unwrap_or(BASE_MOD.into());
+                // println!("{mod_name:?}, {name:?}");
+                let mod_name = mod_name.unwrap_or(current_mod.to_string());
 
-                let function = self.fn_mod.get_function(&mod_name, &name).unwrap();
+                let function = self.fn_map[&format!("{mod_name}::{name}")];
                 let mut params = Vec::new();
 
                 for param in params_ {
@@ -355,8 +351,8 @@ impl<'ctx> Compiler<'ctx> {
                     self.context.void_type().fn_type(&param_tys, is_var)
                 };
 
-                self.fn_mod
-                    .append_function(&current_mod, &name, fn_type, Some(Linkage::External));
+                let function = self.module.add_function(&name, fn_type, Some(Linkage::External));
+                self.fn_map.insert(format!("{current_mod}::{name}"), function);
 
                 Value::Int(self.context.i64_type().const_int(0, false))
             }
@@ -383,6 +379,7 @@ impl<'ctx> Compiler<'ctx> {
             }
 
             ExprKind::Function(name, args, return_type, inner) => {
+
                 let mut params = Vec::with_capacity(args.len());
                 let mut param_names = Vec::with_capacity(args.len());
 
@@ -401,10 +398,12 @@ impl<'ctx> Compiler<'ctx> {
                     false,
                 );
 
-                let function = self
-                    .fn_mod
-                    .append_function(&current_mod, &name, fn_type, None)
-                    .unwrap();
+                let full_name = format!("{current_mod}::{name}");
+
+                let function = self.module.add_function(&full_name, fn_type, None);
+
+                self.fn_map.insert(full_name, function);
+
                 let fn_entry = self.context.append_basic_block(function, "entry");
 
                 self.builder.position_at_end(fn_entry);
@@ -430,7 +429,7 @@ impl<'ctx> Compiler<'ctx> {
                 for node in inner {
                     self.handle(
                         node,
-                        var_map,
+                        &mut function_scoped_var_map,
                         current_mod,
                         FunctionVal {
                             block: function.get_last_basic_block(),
@@ -558,7 +557,19 @@ impl<'ctx> Compiler<'ctx> {
                 Value::Int(self.context.i64_type().get_undef())
             }
 
-            // ExprKind::Mod(, )
+            ExprKind::Mod(mod_name, inner) => {
+                let mut var_map = HashMap::new();
+                for node in inner {
+                    assert!(matches!(node.inner, ExprKind::Function(..) | ExprKind::ExternFunction(..)), "Modules can only contain function and global constants (not implemented yet)");
+                    self.handle(node, &mut var_map, &mod_name, current_function);
+                }
+
+                self.builder
+                    .position_at_end(current_function.block.unwrap());
+
+                Value::Int(self.context.i64_type().get_undef())
+            }
+
             i => unimplemented!("unimplemented: {i:?}"),
         }
     }
