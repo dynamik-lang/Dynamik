@@ -3,7 +3,7 @@ use std::{
     ops::Range,
 };
 
-use chumsky::{input::{ValueInput, Stream}, prelude::*};
+use chumsky::{input::ValueInput, prelude::*};
 use logos::Logos;
 
 pub type Span = SimpleSpan<usize>;
@@ -214,7 +214,7 @@ where
             let ident = select! {
                 LogosToken::Ident(name) => name.to_string()
             };
-    
+
             let val = select! {
                 LogosToken::Int(i) => ExprKind::Int(i.parse().unwrap()),
                 LogosToken::Float(f) => ExprKind::Float(f.parse().unwrap()),
@@ -269,12 +269,13 @@ where
                 .separated_by(just(LogosToken::Comma))
                 .allow_trailing()
                 .collect::<Vec<_>>();
-            let four_dots = ident.then(just(LogosToken::FourDots).ignore_then(ident).or_not()).map(|(name, module)| (name, module));
-            let call = four_dots.clone().then(items
-                .delimited_by(just(LogosToken::LParen), just(LogosToken::RParen))
-            ).map_with_span(|((name, module), args), span: Span| {
-                Expr::new(span.into(), ExprKind::FunctionCall(module, name, args))
-            });
+            let four_dots = ident.then_ignore(just(LogosToken::FourDots)).or_not().then(ident).map(|(module, name)| (module, name));
+            let call = four_dots
+                .clone()
+                .then(items.delimited_by(just(LogosToken::LParen), just(LogosToken::RParen)))
+                .map_with_span(|((module, name), args), span: Span| {
+                    Expr::new(span.into(), ExprKind::FunctionCall(module, name, args))
+                });
             let product = val.clone().foldl(
                 op.then(val)
                     .map_with_span(|a, span: Span| (a, span))
@@ -325,7 +326,7 @@ where
                         ExprKind::Binary(Box::new(lhs), op, Box::new(rhs)),
                     )
                 });
-           call.or(expr_)
+            call.or(expr_.clone())
                 .clone()
                 .or(expr_.delimited_by(just(LogosToken::LParen), just(LogosToken::RParen)))
         });

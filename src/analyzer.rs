@@ -66,32 +66,25 @@ impl Analyzer {
                 } else {
                     ScopeVal::Function(params.len())
                 };
-                self.scopes
-                    .last_mut()
-                    .unwrap()
-                    .insert(name, ty);
+                self.scopes.last_mut().unwrap().insert(name, ty);
             }
-            ExprKind::FunctionCall(callee, params) => match callee.inner {
-                ExprKind::Ident(name) => {
-                    if let Some(ScopeVal::Function(size)) = self.get(name.clone()) {
-                        if params.len() != size {
-                            self.basic_err(
-                                format!(
-                                    "expected function to have {} arguments found {}",
-                                    size,
-                                    params.len()
-                                ),
-                                ast.span,
-                            )
-                        }
-                    }
-                    else if let Some(ScopeVal::FunctionVariadic) = self.get(name) {
-                    } else {
-                        self.basic_err("Function not found".into(), ast.span)
-                    }
-                }
-                _ => self.basic_err("This is not callable".into(), callee.span),
-            },
+            ExprKind::FunctionCall(_mod_name, name, params) => {
+                // if let Some(ScopeVal::Function(size)) = self.get(name.clone()) {
+                //     if params.len() != size {
+                //         self.basic_err(
+                //             format!(
+                //                 "expected function to have {} arguments found {}",
+                //                 size,
+                //                 params.len()
+                //             ),
+                //             ast.span,
+                //         )
+                //     }
+                // } else if let Some(ScopeVal::FunctionVariadic) = self.get(name) {
+                // } else {
+                //     self.basic_err("Function not found".into(), ast.span)
+                // }
+            }
             ExprKind::Function(name, params, _, block) => {
                 self.scopes
                     .last_mut()

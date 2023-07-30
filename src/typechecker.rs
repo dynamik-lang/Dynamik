@@ -218,53 +218,47 @@ impl TypeChecker {
                 );
                 None
             }
-            ExprKind::FunctionCall(f, args) => {
-                if let ExprKind::Ident(ident) = &f.as_ref().inner {
-                    match self.get(ident.to_owned()) {
-                        Some(v) => {
-                            if let TypeForm::Function(f) = v {
-                                if !f.is_variadic {
-                                    for (index, arg) in args.iter().enumerate() {
-                                        let ty = self.check(arg.clone());
-                                        let actual_type = f.parameters[index].clone();
-                                        if ty != Some(actual_type.clone()) {
-                                            self.basic_err(
-                                                format!(
-                                                    "Expected argument as type {:?} found {:?}",
-                                                    actual_type,
-                                                    ty.unwrap_or(TypeForm::Void)
-                                                ),
-                                                arg.span.clone(),
-                                            )
-                                        }
-                                    }
-                                } else {
-                                    for (index, parameter) in f.parameters.iter().enumerate() {
-                                        let actual_type = parameter.to_owned();
-                                        let arg = args[index].clone();
-                                        let ty = self.check(arg.clone());
-                                        if ty != Some(actual_type.clone()) {
-                                            self.basic_err(
-                                                format!(
-                                                    "Expected argument as type {:?} found {:?}",
-                                                    actual_type,
-                                                    ty.unwrap_or(TypeForm::Void)
-                                                ),
-                                                arg.span.clone(),
-                                            )
-                                        }
-                                    }
+            ExprKind::FunctionCall(_mod_name, name, args) => match self.get(name) {
+                Some(v) => {
+                    if let TypeForm::Function(f) = v {
+                        if !f.is_variadic {
+                            for (index, arg) in args.iter().enumerate() {
+                                let ty = self.check(arg.clone());
+                                let actual_type = f.parameters[index].clone();
+                                if ty != Some(actual_type.clone()) {
+                                    self.basic_err(
+                                        format!(
+                                            "Expected argument as type {:?} found {:?}",
+                                            actual_type,
+                                            ty.unwrap_or(TypeForm::Void)
+                                        ),
+                                        arg.span.clone(),
+                                    )
                                 }
-                                return *f.return_type;
                             }
-                            unreachable!()
+                        } else {
+                            for (index, parameter) in f.parameters.iter().enumerate() {
+                                let actual_type = parameter.to_owned();
+                                let arg = args[index].clone();
+                                let ty = self.check(arg.clone());
+                                if ty != Some(actual_type.clone()) {
+                                    self.basic_err(
+                                        format!(
+                                            "Expected argument as type {:?} found {:?}",
+                                            actual_type,
+                                            ty.unwrap_or(TypeForm::Void)
+                                        ),
+                                        arg.span.clone(),
+                                    )
+                                }
+                            }
                         }
-                        None => return None,
+                        return *f.return_type;
                     }
-                } else {
                     unreachable!()
                 }
-            }
+                None => return None,
+            },
             ExprKind::Ident(name) => return self.get(name),
             ExprKind::Binary(lhs, op, rhs) => {
                 let lhs_ty = self.check(*lhs.clone());
@@ -298,8 +292,13 @@ impl TypeChecker {
                 if op.is_comp() {
                     Some(TypeForm::Bool)
                 } else {
-                    if lhs_ty.clone().unwrap_or(TypeForm::Void) == TypeForm::Bool && rhs_ty.unwrap_or(TypeForm::Void) == TypeForm::Bool {
-                        self.basic_err("Cannot do none-comp operation between booleans".into(), node.span)
+                    if lhs_ty.clone().unwrap_or(TypeForm::Void) == TypeForm::Bool
+                        && rhs_ty.unwrap_or(TypeForm::Void) == TypeForm::Bool
+                    {
+                        self.basic_err(
+                            "Cannot do none-comp operation between booleans".into(),
+                            node.span,
+                        )
                     }
                     lhs_ty
                 }
