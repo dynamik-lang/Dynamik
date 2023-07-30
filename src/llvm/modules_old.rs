@@ -5,9 +5,9 @@ use inkwell::module::{Linkage, Module};
 use inkwell::types::FunctionType;
 use inkwell::values::FunctionValue;
 
-use super::types::FunctionVal;
+use super::types::Value;
 
-pub(crate) const BASE_MOD: &str = "__base__";
+pub(crate)
 
 pub(crate) struct FunctionModule<'ctx> {
     context: &'ctx Context,
@@ -25,8 +25,10 @@ impl<'ctx> FunctionModule<'ctx> {
     }
 
     pub(crate) fn get_modules(&self) -> Vec<Module<'ctx>> {
-        // really expensive work
-        self.modules.clone().into_values().collect()
+        for m in self.modules.values() {
+            m.print_to_stderr();
+        }
+        self.modules.values().map(|i| i.clone()).collect()
     }
 
     pub(crate) fn get_function(
@@ -74,7 +76,8 @@ impl<'ctx> FunctionModule<'ctx> {
             return None;
         }
 
-        self.modules
+        let _ = self
+            .modules
             .insert(module_name.into(), self.context.create_module(module_name));
 
         Some(())
