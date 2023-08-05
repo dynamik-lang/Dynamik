@@ -7,7 +7,7 @@ const BASE_MOD: &str = "__base__";
 const MAIN_FN: &str = "__base__::__main__";
 
 use inkwell::module::Module;
-use inkwell::values::FunctionValue;
+use inkwell::values::{FunctionValue, InstructionOpcode, InstructionValue};
 use inkwell::{
     builder::Builder,
     context::Context,
@@ -113,6 +113,19 @@ impl<'ctx> Compiler<'ctx> {
         self.builder
             .build_return(Some(&self.context.i32_type().const_int(0, false)));
 
+        for function in self.module.get_functions() {
+            let Some(last_block) = function.get_last_basic_block() else { continue; };
+            for block in function.get_basic_blocks() {
+                if block.get_first_instruction().is_none() && block != last_block {
+                    self.builder.position_at_end(block);
+                    self.builder.build_unconditional_branch(last_block);
+                }
+            }
+        }
+
+        // self.module.print_to_stderr();
+        self.module.verify().unwrap();
+
         // let _ = self.module.print_to_file("output.ll");
 
         Ok(())
@@ -136,7 +149,6 @@ impl<'ctx> Compiler<'ctx> {
     }
 
     pub fn jit_run(&mut self) {
-        // self.merged_module.print_to_stderr();
         unsafe {
             self.exec_engine
                 .run_function_as_main(self.module.get_function("main").unwrap(), &[])
@@ -351,8 +363,11 @@ impl<'ctx> Compiler<'ctx> {
                     self.context.void_type().fn_type(&param_tys, is_var)
                 };
 
-                let function = self.module.add_function(&name, fn_type, Some(Linkage::External));
-                self.fn_map.insert(format!("{current_mod}::{name}"), function);
+                let function = self
+                    .module
+                    .add_function(&name, fn_type, Some(Linkage::External));
+                self.fn_map
+                    .insert(format!("{current_mod}::{name}"), function);
 
                 Value::Int(self.context.i64_type().const_int(0, false))
             }
@@ -379,7 +394,6 @@ impl<'ctx> Compiler<'ctx> {
             }
 
             ExprKind::Function(name, args, return_type, inner) => {
-
                 let mut params = Vec::with_capacity(args.len());
                 let mut param_names = Vec::with_capacity(args.len());
 
@@ -388,15 +402,25 @@ impl<'ctx> Compiler<'ctx> {
                     params.push(self.get_type(arg_type));
                 }
 
-                let return_type = self.get_type(return_type.unwrap_or("void".into()));
-                let fn_type = return_type.fn_type(
-                    params
-                        .iter()
-                        .map(|i| i.clone().into())
-                        .collect::<Vec<_>>()
-                        .as_slice(),
-                    false,
-                );
+                let fn_type = if let Some(return_type) = return_type {
+                    self.get_type(return_type).fn_type(
+                        params
+                            .iter()
+                            .map(|i| i.clone().into())
+                            .collect::<Vec<_>>()
+                            .as_slice(),
+                        false,
+                    )
+                } else {
+                    self.context.void_type().fn_type(
+                        params
+                            .iter()
+                            .map(|i| i.clone().into())
+                            .collect::<Vec<_>>()
+                            .as_slice(),
+                        false,
+                    )
+                };
 
                 let full_name = format!("{current_mod}::{name}");
 
@@ -462,13 +486,13 @@ impl<'ctx> Compiler<'ctx> {
 
                 let then_block = self
                     .context
-                    .append_basic_block(current_function.value, "then");
+                    .append_basic_block(current_function.value, "if.then");
                 let else_block = self
                     .context
-                    .append_basic_block(current_function.value, "else");
+                    .append_basic_block(current_function.value, "if.else");
                 let after_block = self
                     .context
-                    .append_basic_block(current_function.value, "after");
+                    .append_basic_block(current_function.value, "if.after");
 
                 self.builder
                     .build_conditional_branch(cmp, then_block, else_block);
@@ -479,7 +503,9 @@ impl<'ctx> Compiler<'ctx> {
                     self.handle(node, var_map, current_mod, current_function);
                 }
 
-                self.builder.build_unconditional_branch(after_block);
+                if self.builder.get_insert_block().unwrap() == then_block {
+                    self.builder.build_unconditional_branch(after_block);
+                }
 
                 // else block
                 self.builder.position_at_end(else_block);
@@ -489,10 +515,22 @@ impl<'ctx> Compiler<'ctx> {
                     }
                 }
 
-                self.builder.build_unconditional_branch(after_block);
+                if self.builder.get_insert_block().unwrap() == else_block {
+                    self.builder.build_unconditional_branch(after_block);
+                }
 
-                // after block
-                self.builder.position_at_end(after_block);
+                let last_block = current_function.value.get_last_basic_block().unwrap();
+                let after_block_last_instr = after_block.get_last_instruction();
+
+                if last_block != after_block
+                    && (after_block_last_instr.is_none()
+                        || after_block_last_instr.unwrap().get_opcode() != InstructionOpcode::Br)
+                {
+                    self.builder.position_at_end(after_block);
+                    self.builder.build_unconditional_branch(last_block);
+                }
+
+                self.builder.position_at_end(last_block);
 
                 Value::Int(self.context.i64_type().get_undef())
             }
@@ -523,15 +561,20 @@ impl<'ctx> Compiler<'ctx> {
             }
 
             ExprKind::While(condition, inner) => {
+                // check condition here
                 let loop_start_block = self
                     .context
-                    .append_basic_block(current_function.value, "loop_start");
-                let loop_continute_block = self
+                    .append_basic_block(current_function.value, "loop.start");
+
+                // code inside the loop
+                let loop_continue_block = self
                     .context
-                    .append_basic_block(current_function.value, "loop_continue");
-                let after_block = self
+                    .append_basic_block(current_function.value, "loop.continue");
+
+                // code after the loop
+                let after_loop_block = self
                     .context
-                    .append_basic_block(current_function.value, "after");
+                    .append_basic_block(current_function.value, "loop.after");
 
                 self.builder.build_unconditional_branch(loop_start_block);
 
@@ -540,19 +583,33 @@ impl<'ctx> Compiler<'ctx> {
                 let cmp = self
                     .handle(*condition, var_map, current_mod, current_function)
                     .as_bool();
+
                 self.builder
-                    .build_conditional_branch(cmp, loop_continute_block, after_block);
+                    .build_conditional_branch(cmp, loop_continue_block, after_loop_block);
 
                 // loop continue block
-                self.builder.position_at_end(loop_continute_block);
+                self.builder.position_at_end(loop_continue_block);
                 for node in inner {
                     self.handle(node, var_map, current_mod, current_function);
                 }
 
                 self.builder.build_unconditional_branch(loop_start_block);
 
-                // loop after block
-                self.builder.position_at_end(after_block);
+                let last_block = current_function.value.get_last_basic_block().unwrap();
+
+                self.builder.position_at_end(after_loop_block);
+                let after_block_last_instr = after_loop_block.get_last_instruction();
+                if last_block != after_loop_block
+                    && (after_block_last_instr.is_none()
+                        || after_block_last_instr.unwrap().get_opcode() != InstructionOpcode::Br)
+                {
+                    self.builder.position_at_end(after_loop_block);
+                    let new_last_block = self
+                        .context
+                        .append_basic_block(current_function.value, "loop.new_after");
+                    self.builder.build_unconditional_branch(new_last_block);
+                    self.builder.position_at_end(new_last_block);
+                }
 
                 Value::Int(self.context.i64_type().get_undef())
             }
