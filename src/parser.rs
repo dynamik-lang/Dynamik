@@ -269,7 +269,11 @@ where
                 .separated_by(just(LogosToken::Comma))
                 .allow_trailing()
                 .collect::<Vec<_>>();
-            let four_dots = ident.then_ignore(just(LogosToken::FourDots)).or_not().then(ident).map(|(module, name)| (module, name));
+            let four_dots = ident
+                .then_ignore(just(LogosToken::FourDots))
+                .or_not()
+                .then(ident)
+                .map(|(module, name)| (module, name));
             let call = four_dots
                 .clone()
                 .then(items.delimited_by(just(LogosToken::LParen), just(LogosToken::RParen)))

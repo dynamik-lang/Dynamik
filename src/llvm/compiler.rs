@@ -617,7 +617,7 @@ impl<'ctx> Compiler<'ctx> {
             ExprKind::Mod(mod_name, inner) => {
                 let mut var_map = HashMap::new();
                 for node in inner {
-                    assert!(matches!(node.inner, ExprKind::Function(..) | ExprKind::ExternFunction(..)), "Modules can only contain function and global constants (not implemented yet)");
+                    assert!(matches!(node.inner, ExprKind::Mod(..) | ExprKind::Function(..) | ExprKind::ExternFunction(..)), "Modules can only contain function and global constants (not implemented yet)");
                     self.handle(node, &mut var_map, &mod_name, current_function);
                 }
 
