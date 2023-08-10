@@ -18,7 +18,7 @@ There's no standard library right now, so we have to use printf from libc.
 
 File: hello_world.dy
 ```dynamik
-extern "C" let printf(string, ...);
+extern "C" let printf(string, ...) -> int;
 
 printf("Hello, World!\n");
 ```
@@ -81,8 +81,8 @@ In the above example, the `add` function takes two `int` arguments and returns a
 Dynamik allows you to use external functions from the C library. To use an external function, you can declare it as follows:
 
 ```dynamik
-extern "C" let puts(string);
-extern "C" let printf(string, ...);
+extern "C" let puts(string) -> int;
+extern "C" let printf(string, ...) -> int;
 ```
 
 The `...` at the end indicates that the function can accept a variable number of arguments, making it variadic.
