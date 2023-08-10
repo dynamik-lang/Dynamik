@@ -270,16 +270,19 @@ where
                 .allow_trailing()
                 .collect::<Vec<_>>();
             let four_dots = ident
-                .separated_by(just(LogosToken::FourDots))
+                .then_ignore(just(LogosToken::FourDots))
+                .repeated()
                 .collect::<Vec<_>>()
                 .or_not()
                 .then(ident)
-                .map(|(module, name)| (module, name));
+                .map(|(module, name)| {
+                    return (module, name)
+                });
             let call = four_dots
                 .clone()
                 .then(items.delimited_by(just(LogosToken::LParen), just(LogosToken::RParen)))
                 .map_with_span(|((module, name), args), span: Span| {
-                    Expr::new(span.into(), ExprKind::FunctionCall(module, name, args))
+                    Expr::new(span.into(), ExprKind::FunctionCall(module, name.to_owned(), args))
                 });
             let product = val.clone().foldl(
                 op.then(val)

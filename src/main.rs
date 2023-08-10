@@ -72,7 +72,7 @@ fn main() {
 
     match parser().parse(token_stream).into_result() {
         Ok(o) => {
-            // println!("{o:?}");
+            println!("{:?}", &o);
             let mut analyzer = analyzer::Analyzer::new(o.clone(), &src);
             if analyzer.analyze() {
                 let mut checker = typechecker::TypeChecker::new(o.clone(), &src);
