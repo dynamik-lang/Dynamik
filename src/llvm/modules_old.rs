@@ -7,7 +7,6 @@ use inkwell::values::FunctionValue;
 
 use super::types::Value;
 
-pub(crate)
 
 pub(crate) struct FunctionModule<'ctx> {
     context: &'ctx Context,

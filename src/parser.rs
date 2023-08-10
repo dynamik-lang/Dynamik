@@ -171,7 +171,7 @@ pub enum ExprKind {
     ExternFunction(String, Vec<String>, Option<String>, bool),
     Return(Box<Option<Expr>>),
     While(Box<Expr>, Vec<Expr>),
-    Mod(String, Vec<Expr>),
+    Mod(String, Option<Vec<Expr>>),
     Assignment(String, Box<Expr>),
 }
 #[derive(Debug, Clone)]
@@ -345,7 +345,7 @@ where
                 expr.clone()
                     .repeated()
                     .collect::<Vec<_>>()
-                    .delimited_by(just(LogosToken::LBrace), just(LogosToken::RBrace)),
+                    .delimited_by(just(LogosToken::LBrace), just(LogosToken::RBrace)).or_not(),
             )
             .map_with_span(|(name, body), span: Span| {
                 Expr::new(span.into(), ExprKind::Mod(name, body))
@@ -467,19 +467,3 @@ where
     .collect::<Vec<Expr>>()
 }
 
-#[test]
-fn b() {
-    let src = "hamza::call()";
-    let token_iter = LogosToken::lexer(&src)
-        .spanned()
-        .map(|(tok, span)| match tok {
-            Ok(tok) => (tok, span.into()),
-            Err(()) => (LogosToken::Error, span.into()),
-        });
-
-    let token_stream = Stream::from_iter(token_iter)
-        .spanned::<LogosToken, SimpleSpan>((src.len()..src.len()).into());
-
-    let p = parser().parse(token_stream);
-    println!("{:?}", p.output())
-}
