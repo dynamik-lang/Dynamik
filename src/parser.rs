@@ -165,7 +165,7 @@ pub enum ExprKind {
     Ident(String),
     Binary(Box<Expr>, BinaryOp, Box<Expr>),
     Let(String, String, Box<Option<Expr>>),
-    FunctionCall(Option<String>, String, Vec<Expr>),
+    FunctionCall(Option<Vec<String>>, String, Vec<Expr>),
     Function(String, Vec<(String, String)>, Option<String>, Vec<Expr>),
     If(Box<Expr>, Vec<Expr>, Option<Vec<Expr>>), // IF <condition> <block> (else <block>)?
     ExternFunction(String, Vec<String>, Option<String>, bool),
@@ -270,7 +270,8 @@ where
                 .allow_trailing()
                 .collect::<Vec<_>>();
             let four_dots = ident
-                .then_ignore(just(LogosToken::FourDots))
+                .separated_by(just(LogosToken::FourDots))
+                .collect::<Vec<_>>()
                 .or_not()
                 .then(ident)
                 .map(|(module, name)| (module, name));
