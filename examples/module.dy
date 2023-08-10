@@ -1,13 +1,9 @@
 extern "C" let printf(string, ...) -> int;
 
 mod math {
-    let internal_add(v1: int, v2: int) -> int {
-        return v1 + v2;
-    }
-    
     let add(v1: int, v2: int) -> int {
-        return internal_add(v1, v2);
+        return v1 + v2;
     }
 }
 
-printf("1 + 2 = %d\n", math::add(3 % 2, 2));
+printf("1 + 2 = %d\n", math::add(1, 2));

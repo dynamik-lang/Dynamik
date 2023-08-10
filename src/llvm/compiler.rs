@@ -123,7 +123,7 @@ impl<'ctx> Compiler<'ctx> {
             }
         }
 
-        // self.module.print_to_stderr();
+        self.module.print_to_stderr();
         self.module.verify().unwrap();
 
         // let _ = self.module.print_to_file("output.ll");
@@ -310,9 +310,11 @@ impl<'ctx> Compiler<'ctx> {
                 }
             }
 
-            ExprKind::FunctionCall(mod_name, name, params_) => {
+            ExprKind::FunctionCall(mod_tree, name, params_) => {
+                let mod_path = mod_tree.map(|mod_tree| mod_tree.join("::"));
+
                 // println!("{mod_name:?}, {name:?}");
-                let mod_name = mod_name.unwrap_or(current_mod.to_string());
+                let mod_name = mod_path.unwrap_or(current_mod.to_string());
 
                 let function = self.fn_map[&format!("{mod_name}::{name}")];
                 let mut params = Vec::new();
@@ -618,7 +620,12 @@ impl<'ctx> Compiler<'ctx> {
                 let mut var_map = HashMap::new();
                 for node in inner {
                     assert!(matches!(node.inner, ExprKind::Mod(..) | ExprKind::Function(..) | ExprKind::ExternFunction(..)), "Modules can only contain function and global constants (not implemented yet)");
-                    self.handle(node, &mut var_map, &mod_name, current_function);
+                    self.handle(
+                        node,
+                        &mut var_map,
+                        &format!("{current_mod}::{mod_name}"),
+                        current_function,
+                    );
                 }
 
                 self.builder
