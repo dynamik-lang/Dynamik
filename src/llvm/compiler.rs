@@ -1,4 +1,10 @@
+use crate::analyzer::Analyzer;
+use crate::parser::*;
 use crate::parser::{BinaryOp, Expr, ExprKind};
+use crate::typechecker::TypeChecker;
+use chumsky::{input::Stream, prelude::*};
+use logos::Logos;
+use miette::{miette, LabeledSpan};
 use std::{collections::HashMap, path::Path};
 
 use super::types::*;
@@ -101,10 +107,10 @@ impl<'ctx> Compiler<'ctx> {
                 node.clone(),
                 &mut var_map,
                 BASE_MOD,
-                FunctionVal {
+                Some(FunctionVal {
                     block: main_fn.get_last_basic_block(),
                     value: main_fn,
-                },
+                }),
             );
         }
 
@@ -123,7 +129,7 @@ impl<'ctx> Compiler<'ctx> {
             }
         }
 
-        self.module.print_to_stderr();
+        // self.module.print_to_stderr();
         self.module.verify().unwrap();
 
         // let _ = self.module.print_to_file("output.ll");
@@ -161,7 +167,7 @@ impl<'ctx> Compiler<'ctx> {
         node: Expr,
         var_map: &mut HashMap<String, Variable<'ctx>>,
         current_mod: &str,
-        current_function: FunctionVal<'ctx>,
+        current_function: Option<FunctionVal<'ctx>>,
     ) -> Value<'ctx> {
         match node.inner {
             ExprKind::Int(i) => {
@@ -311,12 +317,27 @@ impl<'ctx> Compiler<'ctx> {
             }
 
             ExprKind::FunctionCall(mod_tree, name, params_) => {
-                let mod_path = mod_tree.map(|mod_tree| mod_tree.join("::"));
+                assert!(mod_tree.is_some());
 
-                // println!("{mod_name:?}, {name:?}");
-                let mod_name = mod_path.unwrap_or(current_mod.to_string());
+                let mod_tree = mod_tree.unwrap();
+                let mod_path = mod_tree.join("::");
 
-                let function = self.fn_map[&format!("{mod_name}::{name}")];
+                // println!("mod_path: {mod_path}");
+
+                let function_entry = self.fn_map.get(&format!(
+                    "{current_mod}{}{mod_path}::{name}",
+                    if mod_tree.is_empty() { "" } else { "::" }
+                ));
+
+                let function = *if let Some(function) = function_entry {
+                    function
+                } else {
+                    // the function is from another file
+                    self.fn_map
+                        .get(&format!("{mod_path}::{name}",))
+                        .expect("Function not found")
+                };
+
                 let mut params = Vec::new();
 
                 for param in params_ {
@@ -325,10 +346,10 @@ impl<'ctx> Compiler<'ctx> {
                             param,
                             var_map,
                             current_mod,
-                            FunctionVal {
+                            Some(FunctionVal {
                                 block: function.get_last_basic_block(),
                                 value: function,
-                            },
+                            }),
                         )
                         .as_basic_value(),
                     ));
@@ -457,10 +478,10 @@ impl<'ctx> Compiler<'ctx> {
                         node,
                         &mut function_scoped_var_map,
                         current_mod,
-                        FunctionVal {
+                        Some(FunctionVal {
                             block: function.get_last_basic_block(),
                             value: function,
-                        },
+                        }),
                     );
                 }
 
@@ -488,13 +509,13 @@ impl<'ctx> Compiler<'ctx> {
 
                 let then_block = self
                     .context
-                    .append_basic_block(current_function.value, "if.then");
+                    .append_basic_block(current_function.unwrap().value, "if.then");
                 let else_block = self
                     .context
-                    .append_basic_block(current_function.value, "if.else");
+                    .append_basic_block(current_function.unwrap().value, "if.else");
                 let after_block = self
                     .context
-                    .append_basic_block(current_function.value, "if.after");
+                    .append_basic_block(current_function.unwrap().value, "if.after");
 
                 self.builder
                     .build_conditional_branch(cmp, then_block, else_block);
@@ -521,7 +542,11 @@ impl<'ctx> Compiler<'ctx> {
                     self.builder.build_unconditional_branch(after_block);
                 }
 
-                let last_block = current_function.value.get_last_basic_block().unwrap();
+                let last_block = current_function
+                    .unwrap()
+                    .value
+                    .get_last_basic_block()
+                    .unwrap();
                 let after_block_last_instr = after_block.get_last_instruction();
 
                 if last_block != after_block
@@ -566,17 +591,17 @@ impl<'ctx> Compiler<'ctx> {
                 // check condition here
                 let loop_start_block = self
                     .context
-                    .append_basic_block(current_function.value, "loop.start");
+                    .append_basic_block(current_function.unwrap().value, "loop.start");
 
                 // code inside the loop
                 let loop_continue_block = self
                     .context
-                    .append_basic_block(current_function.value, "loop.continue");
+                    .append_basic_block(current_function.unwrap().value, "loop.continue");
 
                 // code after the loop
                 let after_loop_block = self
                     .context
-                    .append_basic_block(current_function.value, "loop.after");
+                    .append_basic_block(current_function.unwrap().value, "loop.after");
 
                 self.builder.build_unconditional_branch(loop_start_block);
 
@@ -597,7 +622,11 @@ impl<'ctx> Compiler<'ctx> {
 
                 self.builder.build_unconditional_branch(loop_start_block);
 
-                let last_block = current_function.value.get_last_basic_block().unwrap();
+                let last_block = current_function
+                    .unwrap()
+                    .value
+                    .get_last_basic_block()
+                    .unwrap();
 
                 self.builder.position_at_end(after_loop_block);
                 let after_block_last_instr = after_loop_block.get_last_instruction();
@@ -608,7 +637,7 @@ impl<'ctx> Compiler<'ctx> {
                     self.builder.position_at_end(after_loop_block);
                     let new_last_block = self
                         .context
-                        .append_basic_block(current_function.value, "loop.new_after");
+                        .append_basic_block(current_function.unwrap().value, "loop.new_after");
                     self.builder.build_unconditional_branch(new_last_block);
                     self.builder.position_at_end(new_last_block);
                 }
@@ -616,14 +645,69 @@ impl<'ctx> Compiler<'ctx> {
                 Value::Int(self.context.i64_type().get_undef())
             }
 
-            ExprKind::Mod(mod_name, inner) => {
-                assert!(inner.is_some(), "file include not implemented");
+            ExprKind::Mod(mod_name, None) => {
+                let src = match std::fs::read_to_string(format!("{}.dy", &mod_name)) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        eprintln!("File not found: {}.dy", &mod_name);
+                        std::process::exit(1);
+                    }
+                };
 
-                let inner = inner.unwrap();
+                let token_iter = LogosToken::lexer(&src)
+                    .spanned()
+                    .map(|(tok, span)| match tok {
+                        Ok(tok) => (tok, span.into()),
+                        Err(()) => (LogosToken::Error, span.into()),
+                    });
 
+                let token_stream = Stream::from_iter(token_iter)
+                    .spanned::<LogosToken, SimpleSpan>((src.len()..src.len()).into());
+
+                match parser().parse(token_stream).into_result() {
+                    Ok(o) => {
+                        // println!("{:?}", &o);
+                        let mut analyzer = Analyzer::new(o.clone(), &src);
+                        if analyzer.analyze() {
+                            let mut checker = TypeChecker::new(o.clone(), &src);
+
+                            if checker.typecheck() {
+                                let mut var_map = HashMap::new();
+                                for node in o {
+                                    assert!(matches!(node.inner, ExprKind::Mod(..) | ExprKind::Function(..) | ExprKind::ExternFunction(..)), "Modules can only contain function, sub modules and global constants (not implemented yet)");
+                                    // FIXME: Function not found in function map
+                                    self.handle(node, &mut var_map, &mod_name, current_function);
+                                }
+                            };
+                        }
+                    }
+
+                    Err(errs) => {
+                        for err in errs {
+                            let span: std::ops::Range<usize> = (*err.span()).into();
+                            let reason = err.reason().to_string();
+                            println!(
+                                "{:?}",
+                                miette!(
+                                    labels = vec![LabeledSpan::at(span, reason)],
+                                    "Parsing error"
+                                )
+                                .with_source_code(src.clone())
+                            );
+                        }
+
+                        std::process::exit(1);
+                    }
+                }
+
+                Value::Int(self.context.i64_type().get_undef())
+            }
+
+            ExprKind::Mod(mod_name, Some(inner)) => {
                 let mut var_map = HashMap::new();
+
                 for node in inner {
-                    assert!(matches!(node.inner, ExprKind::Mod(..) | ExprKind::Function(..) | ExprKind::ExternFunction(..)), "Modules can only contain function and global constants (not implemented yet)");
+                    assert!(matches!(node.inner, ExprKind::Mod(..) | ExprKind::Function(..) | ExprKind::ExternFunction(..)), "Modules can only contain function, sub modules and global constants (not implemented yet)");
                     self.handle(
                         node,
                         &mut var_map,
@@ -633,7 +717,7 @@ impl<'ctx> Compiler<'ctx> {
                 }
 
                 self.builder
-                    .position_at_end(current_function.block.unwrap());
+                    .position_at_end(current_function.unwrap().block.unwrap());
 
                 Value::Int(self.context.i64_type().get_undef())
             }
