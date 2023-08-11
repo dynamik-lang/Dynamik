@@ -47,6 +47,8 @@ pub enum LogosToken<'a> {
     And,
     #[token("||")]
     Or,
+    #[token("%")]
+    Percent,
     #[token("==")]
     Eqq,
     #[token("!=")]
@@ -105,6 +107,7 @@ impl<'a> fmt::Display for LogosToken<'a> {
             LogosToken::Or => write!(f, "||"),
             LogosToken::True => write!(f, "true"),
             LogosToken::False => write!(f, "false"),
+            LogosToken::Percent => write!(f, "%"),
             LogosToken::FourDots => write!(f, "::"),
             LogosToken::Bang => write!(f, "!"),
             LogosToken::KwWhile => write!(f, "while"),
@@ -165,6 +168,7 @@ pub enum ExprKind {
     String(String),
     Ident(String),
     Binary(Box<Expr>, BinaryOp, Box<Expr>),
+    Unary(UnaryOp, Box<Expr>),
     Let(String, String, Box<Option<Expr>>),
     FunctionCall(Option<Vec<String>>, String, Vec<Expr>),
     Function(String, Vec<(String, String)>, Option<String>, Vec<Expr>),
@@ -174,6 +178,12 @@ pub enum ExprKind {
     While(Box<Expr>, Vec<Expr>),
     Mod(String, Option<Vec<Expr>>),
     Assignment(String, Box<Expr>),
+}
+#[derive(Debug, Clone)]
+pub enum UnaryOp {
+    Not,
+    Neg,
+    Pos,
 }
 #[derive(Debug, Clone)]
 pub enum BinaryOp {
@@ -189,6 +199,7 @@ pub enum BinaryOp {
     Eq,
     Or,
     And,
+    Mod,
 }
 impl BinaryOp {
     pub fn is_comp(self) -> bool {
@@ -326,6 +337,7 @@ where
             let op = choice((
                 just(LogosToken::Or).to(BinaryOp::Or),
                 just(LogosToken::And).to(BinaryOp::And),
+                just(LogosToken::Percent).to(BinaryOp::Mod)
             ));
             let expr_ = comp
                 .clone()
@@ -335,7 +347,16 @@ where
                         ExprKind::Binary(Box::new(lhs), op, Box::new(rhs)),
                     )
                 });
-            call.or(expr_.clone())
+            let unary_op = choice((
+                just(LogosToken::Bang).to(UnaryOp::Not),
+                just(LogosToken::Minus).to(UnaryOp::Neg),
+                just(LogosToken::Plus).to(UnaryOp::Pos),
+            ));
+            let unary = unary_op
+                .then(e.clone())
+                .map_with_span(|(op, expr), span: Span| Expr::new(span.into(), ExprKind::Unary(op, Box::new(expr))));
+        
+            unary.or(call.or(expr_.clone()))
                 .clone()
                 .or(expr_.delimited_by(just(LogosToken::LParen), just(LogosToken::RParen)))
         });

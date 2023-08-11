@@ -1,7 +1,7 @@
 use miette::{miette, LabeledSpan, Report};
 use std::{collections::HashMap, ops::Range};
 
-use crate::parser::{Expr, ExprKind};
+use crate::parser::{Expr, ExprKind, UnaryOp};
 #[derive(Clone, Debug, PartialEq)]
 pub struct FunctionLike {
     pub parameters: Vec<TypeForm>,
@@ -63,6 +63,23 @@ impl TypeChecker {
                     None => self.basic_err("This variable has an incorrect type".into(), node.span),
                 }
                 None
+            }
+            ExprKind::Unary(op, expr) => {
+                let expr_ty = self.check(*expr.clone());
+                match op {
+                    UnaryOp::Not => {
+                        if expr_ty != Some(TypeForm::Bool) {
+                            self.basic_err("Expected boolean for not operation".into(), expr.span)
+                        }
+                        Some(TypeForm::Bool)
+                    }
+                    UnaryOp::Neg | UnaryOp::Pos => {
+                        if expr_ty != Some(TypeForm::Int) && expr_ty != Some(TypeForm::Float) {
+                            self.basic_err("Expected number for negation or positive operation".into(), expr.span)
+                        }
+                        expr_ty
+                    }
+                }
             }
             ExprKind::Bool(_) => Some(TypeForm::Bool),
             ExprKind::Float(_) => Some(TypeForm::Float),

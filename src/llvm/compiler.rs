@@ -209,6 +209,21 @@ impl<'ctx> Compiler<'ctx> {
                 let right = self.handle(*right, var_map, current_mod, current_function);
 
                 match op {
+                    BinaryOp::Mod => {
+                        if left.is_float() {
+                            Value::Float(self.builder.build_float_rem(
+                                left.as_float(),
+                                right.as_float(),
+                                "f_mod",
+                            ))
+                        } else {
+                            Value::Int(self.builder.build_int_signed_rem(
+                                left.as_int(),
+                                right.as_int(),
+                                "i_mod",
+                            ))
+                        }
+                    },
                     BinaryOp::Add => {
                         if left.is_float() {
                             Value::Float(self.builder.build_float_add(
@@ -703,6 +718,25 @@ impl<'ctx> Compiler<'ctx> {
                 Value::Int(self.context.i64_type().get_undef())
             }
 
+            ExprKind::Unary(op, expr) => {
+                let expr = self.handle(*expr, var_map, current_mod, current_function);
+                match op {
+                    UnaryOp::Not => {
+                        let not = self.builder.build_not(expr.as_bool(), "not");
+                        Value::Bool(not)
+                    }
+                    UnaryOp::Neg => {
+                        if expr.is_float() {
+                            let neg = self.builder.build_float_neg(expr.as_float(), "neg");
+                            Value::Float(neg)
+                        } else {
+                            let neg = self.builder.build_int_neg(expr.as_int(), "neg");
+                            Value::Int(neg)
+                        }
+                    }
+                    UnaryOp::Pos => expr,
+                }
+            }
             ExprKind::Mod(mod_name, Some(inner)) => {
                 let mut var_map = HashMap::new();
 
@@ -721,7 +755,6 @@ impl<'ctx> Compiler<'ctx> {
 
                 Value::Int(self.context.i64_type().get_undef())
             }
-
             i => unimplemented!("unimplemented: {i:?}"),
         }
     }
