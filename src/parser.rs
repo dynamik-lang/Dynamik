@@ -98,8 +98,11 @@ pub enum LogosToken<'a> {
     KwWhile,
     #[token("mod")]
     KwMod,
+    #[token("fn")]
+    KwFn,
     Error,
 }
+
 impl<'a> fmt::Display for LogosToken<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
@@ -122,6 +125,7 @@ impl<'a> fmt::Display for LogosToken<'a> {
             LogosToken::KwElse => write!(f, "else"),
             LogosToken::KwIf => write!(f, "if"),
             LogosToken::KwMod => write!(f, "mod"),
+            LogosToken::KwFn => write!(f, "fn"),
             LogosToken::ThreeDots => write!(f, "..."),
             LogosToken::Semi => write!(f, ";"),
             LogosToken::LAngle => write!(f, "<"),
@@ -388,7 +392,7 @@ where
                     ExprKind::Let(ident.to_string(), ty.to_string(), Box::new(rhs)),
                 )
             });
-        let function = just(LogosToken::KwLet)
+        let function = just(LogosToken::KwFn)
             .ignore_then(ident)
             .then(
                 ident
