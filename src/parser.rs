@@ -234,7 +234,7 @@ where
             let val = select! {
                 LogosToken::Int(i) => ExprKind::Int(i.parse().unwrap()),
                 LogosToken::Float(f) => ExprKind::Float(f.parse().unwrap()),
-                LogosToken::String(s) =>{
+                LogosToken::String(s) => {
                   let mut result = String::new();
                   let mut chars = s.chars().peekable();
 

@@ -13,7 +13,7 @@ const BASE_MOD: &str = "__base__";
 const MAIN_FN: &str = "__base__::__main__";
 
 use inkwell::module::Module;
-use inkwell::values::{FunctionValue, InstructionOpcode, InstructionValue};
+use inkwell::values::{FunctionValue, InstructionOpcode, InstructionValue, BasicValue};
 use inkwell::{
     builder::Builder,
     context::Context,
@@ -129,7 +129,7 @@ impl<'ctx> Compiler<'ctx> {
             }
         }
 
-        // self.module.print_to_stderr();
+        self.module.print_to_stderr();
         self.module.verify().unwrap();
 
         // let _ = self.module.print_to_file("output.ll");
@@ -226,7 +226,7 @@ impl<'ctx> Compiler<'ctx> {
                                 "i_mod",
                             ))
                         }
-                    },
+                    }
 
                     BinaryOp::Add => {
                         if left.is_float() {
@@ -429,9 +429,19 @@ impl<'ctx> Compiler<'ctx> {
                 let ty = self.get_type(ty);
                 let var_alloca = self.builder.build_alloca(ty, &name);
                 if let Some(v) = *val {
-                    let val = self
-                        .handle(v, var_map, current_mod, current_function)
-                        .as_basic_value();
+                    let val = match v.inner {
+                        ExprKind::String(s) => {
+                            // Removed quotes from the string
+                            let s = s.trim_start_matches('"').trim_end_matches('"');
+                            let str_ptr = self.builder.build_global_string_ptr(&s, &name);
+                            str_ptr.as_basic_value_enum()
+                        }
+
+                        _ => self
+                            .handle(v, var_map, current_mod, current_function)
+                            .as_basic_value(),
+                    };
+
                     self.builder.build_store(var_alloca, val);
                 }
 
@@ -455,7 +465,9 @@ impl<'ctx> Compiler<'ctx> {
                     params.push(self.get_type(arg_type));
                 }
 
+                let is_void;
                 let fn_type = if let Some(return_type) = return_type {
+                    is_void = false;
                     self.get_type(return_type).fn_type(
                         params
                             .iter()
@@ -465,6 +477,7 @@ impl<'ctx> Compiler<'ctx> {
                         false,
                     )
                 } else {
+                    is_void = true;
                     self.context.void_type().fn_type(
                         params
                             .iter()
@@ -514,6 +527,14 @@ impl<'ctx> Compiler<'ctx> {
                         }),
                     );
                 }
+
+                if is_void {
+                    println!("Terminating");
+                    self.builder.position_at_end(function.get_last_basic_block().unwrap());
+                    self.builder.build_return(None);
+                }
+
+                self.builder.position_at_end(current_function.unwrap().value.get_last_basic_block().unwrap());
 
                 Value::Int(self.context.i64_type().get_undef())
             }
@@ -716,7 +737,6 @@ impl<'ctx> Compiler<'ctx> {
                                 let mut var_map = HashMap::new();
                                 for node in o {
                                     assert!(matches!(node.inner, ExprKind::Mod(..) | ExprKind::Function(..) | ExprKind::ExternFunction(..)), "Modules can only contain function, sub modules and global constants (not implemented yet)");
-                                    // FIXME: Function not found in function map
                                     self.handle(node, &mut var_map, &mod_name, current_function);
                                 }
                             };

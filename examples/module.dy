@@ -1,4 +1,5 @@
 extern "C" let printf(string, ...) -> int;
+extern "C" let puts(string) -> int;
 
 mod math;
 
@@ -9,3 +10,11 @@ printf("%ld + %ld = %ld\n", v1, v2, math::basic::add(v1, v2));
 printf("%ld - %ld = %ld\n", v1, v2, math::basic::sub(v1, v2));
 printf("%ld * %ld = %ld\n", v1, v2, math::basic::mul(v1, v2));
 printf("%ld / %ld = %ld\n", v1, v2, math::basic::div(v1, v2));
+
+let str: string = "Testing the string type";
+puts(str);
+
+fn print_the_string(s: int) {
+}
+
+print_the_string(1);
