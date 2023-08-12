@@ -6,14 +6,16 @@ use chumsky::prelude::*;
 use chumsky::Parser;
 use chumsky::{input::Stream, span::SimpleSpan};
 use logos::Logos;
-use miette::{miette, LabeledSpan, Report};
 use std::{collections::HashMap, ops::Range};
+
+use miette::{miette, LabeledSpan, Report};
 #[derive(Clone, Copy, Debug)]
 pub enum ScopeVal {
     Function(usize),
     FunctionVariadic,
     Variable,
 }
+
 pub struct Analyzer {
     pub ast: Vec<Expr>,
     scopes: Vec<HashMap<String, ScopeVal>>,
@@ -22,6 +24,7 @@ pub struct Analyzer {
     in_func: usize,
     source: String,
 }
+
 impl Analyzer {
     pub fn new(ast: Vec<Expr>, source: &str) -> Self {
         Self {

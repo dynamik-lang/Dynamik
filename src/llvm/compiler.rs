@@ -13,7 +13,7 @@ const BASE_MOD: &str = "__base__";
 const MAIN_FN: &str = "__base__::__main__";
 
 use inkwell::module::Module;
-use inkwell::values::{FunctionValue, InstructionOpcode, InstructionValue};
+use inkwell::values::{FunctionValue, InstructionOpcode, InstructionValue, BasicValue};
 use inkwell::{
     builder::Builder,
     context::Context,
@@ -129,7 +129,7 @@ impl<'ctx> Compiler<'ctx> {
             }
         }
 
-        // self.module.print_to_stderr();
+        self.module.print_to_stderr();
         self.module.verify().unwrap();
 
         // let _ = self.module.print_to_file("output.ll");
@@ -174,10 +174,12 @@ impl<'ctx> Compiler<'ctx> {
                 let integer = self.context.i64_type().const_int(i.unsigned_abs(), false);
                 Value::Int(integer)
             }
+
             ExprKind::Float(f) => {
                 let float = self.context.f64_type().const_float(f);
                 Value::Float(float)
             }
+
             ExprKind::Ident(i) => {
                 // println!("{i:?}");
                 let ident = var_map.get(&i).unwrap();
@@ -204,6 +206,7 @@ impl<'ctx> Compiler<'ctx> {
                     _ => todo!(),
                 }
             }
+
             ExprKind::Binary(left, op, right) => {
                 let left = self.handle(*left, var_map, current_mod, current_function);
                 let right = self.handle(*right, var_map, current_mod, current_function);
@@ -223,7 +226,8 @@ impl<'ctx> Compiler<'ctx> {
                                 "i_mod",
                             ))
                         }
-                    },
+                    }
+
                     BinaryOp::Add => {
                         if left.is_float() {
                             Value::Float(self.builder.build_float_add(
@@ -239,6 +243,7 @@ impl<'ctx> Compiler<'ctx> {
                             ))
                         }
                     }
+
                     BinaryOp::Mul => {
                         if left.is_float() {
                             Value::Float(self.builder.build_float_mul(
@@ -254,6 +259,7 @@ impl<'ctx> Compiler<'ctx> {
                             ))
                         }
                     }
+
                     BinaryOp::Div => {
                         if left.is_float() {
                             Value::Float(self.builder.build_float_div(
@@ -269,6 +275,7 @@ impl<'ctx> Compiler<'ctx> {
                             ))
                         }
                     }
+
                     BinaryOp::Sub => {
                         if left.is_float() {
                             Value::Float(self.builder.build_float_sub(
@@ -284,45 +291,53 @@ impl<'ctx> Compiler<'ctx> {
                             ))
                         }
                     }
+
                     BinaryOp::Less => Value::Bool(self.builder.build_int_compare(
                         inkwell::IntPredicate::ULT,
                         left.as_int(),
                         right.as_int(),
                         "less",
                     )),
+
                     BinaryOp::Greater => Value::Bool(self.builder.build_int_compare(
                         inkwell::IntPredicate::UGT,
                         left.as_int(),
                         right.as_int(),
                         "greater",
                     )),
+
                     BinaryOp::LessEq => Value::Bool(self.builder.build_int_compare(
                         inkwell::IntPredicate::ULE,
                         left.as_int(),
                         right.as_int(),
                         "less_equal",
                     )),
+
                     BinaryOp::GreaterEq => Value::Bool(self.builder.build_int_compare(
                         inkwell::IntPredicate::UGE,
                         left.as_int(),
                         right.as_int(),
                         "greater_equal",
                     )),
+
                     BinaryOp::NotEq => Value::Bool(self.builder.build_int_compare(
                         inkwell::IntPredicate::NE,
                         left.as_int(),
                         right.as_int(),
                         "not_equal",
                     )),
+
                     BinaryOp::Eq => Value::Bool(self.builder.build_int_compare(
                         inkwell::IntPredicate::EQ,
                         left.as_int(),
                         right.as_int(),
                         "equal",
                     )),
+
                     BinaryOp::Or => {
                         Value::Bool(self.builder.build_or(left.as_bool(), right.as_bool(), "or"))
                     }
+
                     BinaryOp::And => Value::Bool(self.builder.build_and(
                         left.as_bool(),
                         right.as_bool(),
@@ -414,9 +429,19 @@ impl<'ctx> Compiler<'ctx> {
                 let ty = self.get_type(ty);
                 let var_alloca = self.builder.build_alloca(ty, &name);
                 if let Some(v) = *val {
-                    let val = self
-                        .handle(v, var_map, current_mod, current_function)
-                        .as_basic_value();
+                    let val = match v.inner {
+                        ExprKind::String(s) => {
+                            // Removed quotes from the string
+                            let s = s.trim_start_matches('"').trim_end_matches('"');
+                            let str_ptr = self.builder.build_global_string_ptr(&s, &name);
+                            str_ptr.as_basic_value_enum()
+                        }
+
+                        _ => self
+                            .handle(v, var_map, current_mod, current_function)
+                            .as_basic_value(),
+                    };
+
                     self.builder.build_store(var_alloca, val);
                 }
 
@@ -440,7 +465,9 @@ impl<'ctx> Compiler<'ctx> {
                     params.push(self.get_type(arg_type));
                 }
 
+                let is_void;
                 let fn_type = if let Some(return_type) = return_type {
+                    is_void = false;
                     self.get_type(return_type).fn_type(
                         params
                             .iter()
@@ -450,6 +477,7 @@ impl<'ctx> Compiler<'ctx> {
                         false,
                     )
                 } else {
+                    is_void = true;
                     self.context.void_type().fn_type(
                         params
                             .iter()
@@ -500,6 +528,14 @@ impl<'ctx> Compiler<'ctx> {
                     );
                 }
 
+                if is_void {
+                    println!("Terminating");
+                    self.builder.position_at_end(function.get_last_basic_block().unwrap());
+                    self.builder.build_return(None);
+                }
+
+                self.builder.position_at_end(current_function.unwrap().value.get_last_basic_block().unwrap());
+
                 Value::Int(self.context.i64_type().get_undef())
             }
 
@@ -537,8 +573,12 @@ impl<'ctx> Compiler<'ctx> {
 
                 // then block
                 self.builder.position_at_end(then_block);
+
+                // vars created inside the scope should not be accessed outside
+                let mut scope = var_map.clone();
+
                 for node in then_ast {
-                    self.handle(node, var_map, current_mod, current_function);
+                    self.handle(node, &mut scope, current_mod, current_function);
                 }
 
                 if self.builder.get_insert_block().unwrap() == then_block {
@@ -548,8 +588,11 @@ impl<'ctx> Compiler<'ctx> {
                 // else block
                 self.builder.position_at_end(else_block);
                 if let Some(else_ast) = else_ast {
+                    // vars created inside the scope should not be accessed outside
+                    let mut scope = var_map.clone();
+
                     for node in else_ast {
-                        self.handle(node, var_map, current_mod, current_function);
+                        self.handle(node, &mut scope, current_mod, current_function);
                     }
                 }
 
@@ -631,8 +674,12 @@ impl<'ctx> Compiler<'ctx> {
 
                 // loop continue block
                 self.builder.position_at_end(loop_continue_block);
+
+                // vars created inside the scope should not be accessed outside
+                let mut scope = var_map.clone();
+
                 for node in inner {
-                    self.handle(node, var_map, current_mod, current_function);
+                    self.handle(node, &mut scope, current_mod, current_function);
                 }
 
                 self.builder.build_unconditional_branch(loop_start_block);
@@ -690,7 +737,6 @@ impl<'ctx> Compiler<'ctx> {
                                 let mut var_map = HashMap::new();
                                 for node in o {
                                     assert!(matches!(node.inner, ExprKind::Mod(..) | ExprKind::Function(..) | ExprKind::ExternFunction(..)), "Modules can only contain function, sub modules and global constants (not implemented yet)");
-                                    // FIXME: Function not found in function map
                                     self.handle(node, &mut var_map, &mod_name, current_function);
                                 }
                             };
