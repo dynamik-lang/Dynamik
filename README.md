@@ -43,6 +43,16 @@ Hello, World!
 This is what the language supports so far.
 Note: Since the language is work in progress everything in this section is the subject to change.
 
+## Comments
+In Dynamik, like any other language, comments are used to add notes or describe functionality in the code. They are not executed as part of the program, but provide valuable context and explanation to developers reading the code.
+
+Dynamik uses single-line comments which start with --. Here's an example:
+
+```dynamik
+-- This is a comment in Dynamik
+let a: int = 1; -- You can also write comments after code
+```
+
 ## Data Types
 Dynamik supports the following data types:
 
@@ -57,6 +67,42 @@ To define a variable use the `let name: type = value;` syntax. For example:
 let a: int = 1;
 let b: int = a + 10;
 ```
+
+## Basic Math Operators
+Dynamik supports the following basic math operators:
+
+<table>
+  <tr>
+    <th>Operator</th>
+    <th>Description</th>
+    <th>Example</th>
+  </tr>
+  <tr>
+    <td>+</td>
+    <td>Addition: This operator adds two numbers together.</td>
+    <td><code>let a: int = 1 + 2;</code> sets <code>a</code> to <code>3</code>.</td>
+  </tr>
+  <tr>
+    <td>-</td>
+    <td>Subtraction: This operator subtracts the second number from the first.</td>
+    <td><code>let a: int = 5 - 2;</code> sets <code>a</code> to <code>3</code>.</td>
+  </tr>
+  <tr>
+    <td>*</td>
+    <td>Multiplication: This operator multiplies two numbers together.</td>
+    <td><code>let a: int = 2 * 3;</code> sets <code>a</code> to <code>6</code>.</td>
+  </tr>
+  <tr>
+    <td>/</td>
+    <td>Division: This operator divides the first number by the second.</td>
+    <td><code>let a: int = 6 / 2;</code> sets <code>a</code> to <code>3</code>.</td>
+  </tr>
+  <tr>
+    <td>%</td>
+    <td>Modulus: This operator returns the remainder of the first number divided by the second.</td>
+    <td><code>let a: int = 5 % 2;</code> sets <code>a</code> to <code>1</code>.</td>
+  </tr>
+</table>
 
 ## Functions
 You can define functions in Dynamik using the following syntax:
