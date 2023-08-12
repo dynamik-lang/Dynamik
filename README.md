@@ -102,6 +102,16 @@ Dynamik supports the following basic math operators:
     <td>Modulus: This operator returns the remainder of the first number divided by the second.</td>
     <td><code>let a: int = 5 % 2;</code> sets <code>a</code> to <code>1</code>.</td>
   </tr>
+  <tr>
+    <td>!</td>
+    <td>Logical NOT: This operator inverts the value of a boolean.</td>
+    <td><code>let a: bool = !true;</code> sets <code>a</code> to <code>false</code>.</td>
+  </tr>
+  <tr>
+    <td>-</td>
+    <td>Negation: This operator changes the sign of a number.</td>
+    <td><code>let a: int = -3;</code> sets <code>a</code> to <code>-3</code>.</td>
+  </tr>
 </table>
 
 ## Functions
