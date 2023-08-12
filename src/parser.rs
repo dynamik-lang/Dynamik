@@ -296,6 +296,7 @@ where
                 .map_with_span(|((module, name), args), span: Span| {
                     Expr::new(span.into(), ExprKind::FunctionCall(module, name.to_owned(), args))
                 });
+            let val = call.clone().or(val.clone());
             let product = val.clone().foldl(
                 op.then(val)
                     .map_with_span(|a, span: Span| (a, span))
