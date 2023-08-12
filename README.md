@@ -192,10 +192,10 @@ printf("1 + 2 = %d\n", math::add(1, 2));
 
 ### TODO
 
-[ ] Add Array slices with fixed size
-[ ] Add structs & more types
-[ ] Add traits and impl blocks
-[ ] Add pointers
-[ ] Add dependent typing
-[ ] Create std library
-[ ] Work on the package manager
+- [ ] Add Array slices with fixed size
+- [ ] Add structs & more types
+- [ ] Add traits and impl blocks
+- [ ] Add pointers
+- [ ] Add dependent typing
+- [ ] Create std library
+- [ ] Work on the package manager
