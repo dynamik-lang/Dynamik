@@ -107,7 +107,6 @@ impl Analyzer {
                 } else {
                     name
                 };
-                println!("{:?}", self.scopes.last().unwrap());
                 if let Some(ScopeVal::Function(size)) = self.get(name.clone()) {
                     if params.len() != size {
                         self.basic_err(
@@ -215,7 +214,6 @@ impl Analyzer {
                     .unwrap()
                     .insert(format!("{}::{}", first, key), value.to_owned());
             }
-            println!("{:?}", self.scopes)
         } else {
             let src = match std::fs::read_to_string(format!("{}.dy", name)) {
                 Ok(c) => c,
@@ -272,7 +270,6 @@ impl Analyzer {
                                 .unwrap()
                                 .insert(format!("{}::{}", first, key), value.to_owned());
                         }
-                        println!("{:?}", self.scopes)
                     }
                 }
 
