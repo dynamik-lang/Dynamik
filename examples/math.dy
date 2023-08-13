@@ -1,17 +1,23 @@
 mod basic {
+    extern "C" fn printf(string, ...) -> int;
+
     fn add(v1: int, v2: int) -> int {
+        printf("adding two numbers...\n");
         return v1 + v2;
     }
 
     fn sub(v1: int, v2: int) -> int {
+        printf("subtracting two numbers...\n");
         return v1 - v2;
     }
 
     fn mul(v1: int, v2: int) -> int {
+        printf("multiplying two numbers...\n");
         return v1 * v2;
     }
 
     fn div(v1: int, v2: int) -> int {
+        printf("dividing two numbers...\n");
         return v1 / v2;
     }
 }

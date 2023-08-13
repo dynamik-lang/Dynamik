@@ -1,2 +1,2 @@
-extern "C" let printf(string, ...);
+extern "C" fn printf(string, ...);
 printf("hello world\n");

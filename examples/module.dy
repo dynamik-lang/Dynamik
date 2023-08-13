@@ -1,5 +1,5 @@
-extern "C" let printf(string, ...) -> int;
-extern "C" let puts(string) -> int;
+extern "C" fn printf(string, ...) -> int;
+extern "C" fn puts(string) -> int;
 
 mod math;
 

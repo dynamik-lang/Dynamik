@@ -1,4 +1,4 @@
-extern "C" let printf(string, ...) -> int;
+extern "C" fn printf(string, ...) -> int;
 
 let height: int = 5;
 let num: int = 1;

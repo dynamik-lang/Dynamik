@@ -1,4 +1,4 @@
-extern "C" let printf(string, ...);
+extern "C" fn printf(string, ...);
 
 let x: int = 0;
 while x < 5 {
