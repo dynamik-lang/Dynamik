@@ -183,7 +183,7 @@ impl<'ctx> Compiler<'ctx> {
     ) -> Value<'ctx> {
         match node.inner {
             ExprKind::Int(i) => {
-                let integer = self.context.i64_type().const_int(i.unsigned_abs(), false);
+                let integer = self.context.i64_type().const_int(i, false);
                 Value::Int(integer)
             }
 

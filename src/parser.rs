@@ -166,7 +166,7 @@ impl Expr {
 
 #[derive(Debug, Clone)]
 pub enum ExprKind {
-    Int(i64),
+    Int(u64),
     Float(f64),
     Bool(bool),
     String(String),
