@@ -2,6 +2,7 @@ use crate::analyzer::Analyzer;
 use crate::parser::*;
 use crate::parser::{BinaryOp, Expr, ExprKind};
 use crate::typechecker::TypeChecker;
+use chumsky::container::Seq;
 use chumsky::{input::Stream, prelude::*};
 use logos::Logos;
 use miette::{miette, LabeledSpan};
@@ -13,7 +14,7 @@ const BASE_MOD: &str = "__base__";
 const MAIN_FN: &str = "__base__::__main__";
 
 use inkwell::module::Module;
-use inkwell::values::{FunctionValue, InstructionOpcode, InstructionValue, BasicValue};
+use inkwell::values::{BasicValue, FunctionValue, InstructionOpcode, InstructionValue};
 use inkwell::{
     builder::Builder,
     context::Context,
@@ -27,11 +28,22 @@ use inkwell::{
 
 /// The root compiler
 pub struct Compiler<'ctx> {
+    /// Current LLVM context
     pub(crate) context: &'ctx Context,
+
+    /// Main Module
     pub(crate) module: Module<'ctx>,
+
+    /// Current Target Machine
     pub(crate) target_machine: TargetMachine,
+
+    /// Execution engine for jit executing
     pub(crate) exec_engine: ExecutionEngine<'ctx>,
+
+    /// LLVM Builder
     pub(crate) builder: Builder<'ctx>,
+
+    /// Functions map
     pub(crate) fn_map: HashMap<String, FunctionValue<'ctx>>,
     processed: bool,
 }
@@ -129,7 +141,7 @@ impl<'ctx> Compiler<'ctx> {
             }
         }
 
-        self.module.print_to_stderr();
+        // self.module.print_to_stderr();
         self.module.verify().unwrap();
 
         // let _ = self.module.print_to_file("output.ll");
@@ -346,6 +358,26 @@ impl<'ctx> Compiler<'ctx> {
                 }
             }
 
+            ExprKind::Unary(op, expr) => {
+                let expr = self.handle(*expr, var_map, current_mod, current_function);
+                match op {
+                    UnaryOp::Not => {
+                        let not = self.builder.build_not(expr.as_bool(), "not");
+                        Value::Bool(not)
+                    }
+                    UnaryOp::Neg => {
+                        if expr.is_float() {
+                            let neg = self.builder.build_float_neg(expr.as_float(), "neg");
+                            Value::Float(neg)
+                        } else {
+                            let neg = self.builder.build_int_neg(expr.as_int(), "neg");
+                            Value::Int(neg)
+                        }
+                    }
+                    UnaryOp::Pos => expr,
+                }
+            }
+
             ExprKind::FunctionCall(mod_tree, name, params_) => {
                 assert!(mod_tree.is_some());
 
@@ -359,13 +391,22 @@ impl<'ctx> Compiler<'ctx> {
                     if mod_tree.is_empty() { "" } else { "::" }
                 ));
 
-                let function = *if let Some(function) = function_entry {
-                    function
-                } else {
-                    // the function is from another file
-                    self.fn_map
-                        .get(&format!("{mod_path}::{name}",))
-                        .expect("Function not found")
+                let function = *match function_entry {
+                    // normal function
+                    Some(function) => function,
+                    None => {
+                        let function_entry = self.fn_map.get(&format!("{mod_path}::{name}"));
+                        match function_entry {
+                            // function is inside another file
+                            Some(function) => function,
+
+                            // function is external, we ned to get it from base mod
+                            None => self
+                                .fn_map
+                                .get(&format!("{BASE_MOD}::{name}"))
+                                .expect("Function not found"),
+                        }
+                    }
                 };
 
                 let mut params = Vec::new();
@@ -404,6 +445,14 @@ impl<'ctx> Compiler<'ctx> {
             }
 
             ExprKind::ExternFunction(name, params_ty, ret_ty, is_var) => {
+                if self
+                    .fn_map
+                    .keys()
+                    .any(|key| key == &format!("{BASE_MOD}::{name}"))
+                {
+                    return Value::Int(self.context.i64_type().const_int(0, false));
+                }
+
                 let mut param_tys = Vec::new();
 
                 for p in params_ty {
@@ -419,8 +468,9 @@ impl<'ctx> Compiler<'ctx> {
                 let function = self
                     .module
                     .add_function(&name, fn_type, Some(Linkage::External));
-                self.fn_map
-                    .insert(format!("{current_mod}::{name}"), function);
+
+                // external functions should be placed in the base module
+                self.fn_map.insert(format!("{BASE_MOD}::{name}"), function);
 
                 Value::Int(self.context.i64_type().const_int(0, false))
             }
@@ -471,7 +521,7 @@ impl<'ctx> Compiler<'ctx> {
                     self.get_type(return_type).fn_type(
                         params
                             .iter()
-                            .map(|i| i.clone().into())
+                            .map(|i| (*i).into())
                             .collect::<Vec<_>>()
                             .as_slice(),
                         false,
@@ -481,7 +531,7 @@ impl<'ctx> Compiler<'ctx> {
                     self.context.void_type().fn_type(
                         params
                             .iter()
-                            .map(|i| i.clone().into())
+                            .map(|i| (*i).into())
                             .collect::<Vec<_>>()
                             .as_slice(),
                         false,
@@ -529,12 +579,19 @@ impl<'ctx> Compiler<'ctx> {
                 }
 
                 if is_void {
-                    println!("Terminating");
-                    self.builder.position_at_end(function.get_last_basic_block().unwrap());
+                    // println!("Terminating");
+                    self.builder
+                        .position_at_end(function.get_last_basic_block().unwrap());
                     self.builder.build_return(None);
                 }
 
-                self.builder.position_at_end(current_function.unwrap().value.get_last_basic_block().unwrap());
+                self.builder.position_at_end(
+                    current_function
+                        .unwrap()
+                        .value
+                        .get_last_basic_block()
+                        .unwrap(),
+                );
 
                 Value::Int(self.context.i64_type().get_undef())
             }
@@ -764,25 +821,6 @@ impl<'ctx> Compiler<'ctx> {
                 Value::Int(self.context.i64_type().get_undef())
             }
 
-            ExprKind::Unary(op, expr) => {
-                let expr = self.handle(*expr, var_map, current_mod, current_function);
-                match op {
-                    UnaryOp::Not => {
-                        let not = self.builder.build_not(expr.as_bool(), "not");
-                        Value::Bool(not)
-                    }
-                    UnaryOp::Neg => {
-                        if expr.is_float() {
-                            let neg = self.builder.build_float_neg(expr.as_float(), "neg");
-                            Value::Float(neg)
-                        } else {
-                            let neg = self.builder.build_int_neg(expr.as_int(), "neg");
-                            Value::Int(neg)
-                        }
-                    }
-                    UnaryOp::Pos => expr,
-                }
-            }
             ExprKind::Mod(mod_name, Some(inner)) => {
                 let mut var_map = HashMap::new();
 
@@ -801,7 +839,19 @@ impl<'ctx> Compiler<'ctx> {
 
                 Value::Int(self.context.i64_type().get_undef())
             }
+
             i => unimplemented!("unimplemented: {i:?}"),
         }
+    }
+}
+
+trait ExternFunction<'ctx> {
+    fn is_extern(&self) -> bool;
+}
+
+impl<'ctx> ExternFunction<'ctx> for FunctionValue<'ctx> {
+    fn is_extern(&self) -> bool {
+        // if we cannot access the last basic block, then most likely its an external function
+        self.get_last_basic_block().is_none()
     }
 }
