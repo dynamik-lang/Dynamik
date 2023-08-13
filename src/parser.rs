@@ -291,14 +291,15 @@ where
                 .collect::<Vec<_>>()
                 .or_not()
                 .then(ident)
-                .map(|(module, name)| {
-                    return (module, name)
-                });
+                .map(|(module, name)| return (module, name));
             let call = four_dots
                 .clone()
                 .then(items.delimited_by(just(LogosToken::LParen), just(LogosToken::RParen)))
                 .map_with_span(|((module, name), args), span: Span| {
-                    Expr::new(span.into(), ExprKind::FunctionCall(module, name.to_owned(), args))
+                    Expr::new(
+                        span.into(),
+                        ExprKind::FunctionCall(module, name.to_owned(), args),
+                    )
                 });
             let val = call.clone().or(val.clone());
             let product = val.clone().foldl(
@@ -342,7 +343,7 @@ where
             let op = choice((
                 just(LogosToken::Or).to(BinaryOp::Or),
                 just(LogosToken::And).to(BinaryOp::And),
-                just(LogosToken::Percent).to(BinaryOp::Mod)
+                just(LogosToken::Percent).to(BinaryOp::Mod),
             ));
             let expr_ = comp
                 .clone()
@@ -359,9 +360,12 @@ where
             ));
             let unary = unary_op
                 .then(e.clone())
-                .map_with_span(|(op, expr), span: Span| Expr::new(span.into(), ExprKind::Unary(op, Box::new(expr))));
-        
-            unary.or(call.or(expr_.clone()))
+                .map_with_span(|(op, expr), span: Span| {
+                    Expr::new(span.into(), ExprKind::Unary(op, Box::new(expr)))
+                });
+
+            unary
+                .or(call.or(expr_.clone()))
                 .clone()
                 .or(expr_.delimited_by(just(LogosToken::LParen), just(LogosToken::RParen)))
         });
@@ -375,7 +379,8 @@ where
                 expr.clone()
                     .repeated()
                     .collect::<Vec<_>>()
-                    .delimited_by(just(LogosToken::LBrace), just(LogosToken::RBrace)).or_not(),
+                    .delimited_by(just(LogosToken::LBrace), just(LogosToken::RBrace))
+                    .or_not(),
             )
             .map_with_span(|(name, body), span: Span| {
                 Expr::new(span.into(), ExprKind::Mod(name, body))
@@ -440,19 +445,18 @@ where
             });
         let extern_fn = just(LogosToken::KwExtern)
             .ignore_then(just(LogosToken::String("\"C\"")))
-            .ignore_then(just(LogosToken::KwLet))
+            .ignore_then(just(LogosToken::KwFn))
             .ignore_then(ident)
             .then_ignore(just(LogosToken::LParen))
             .then(
                 ident
-                    .clone()
                     .separated_by(just(LogosToken::Comma))
                     .allow_trailing()
                     .collect::<Vec<_>>()
                     .then(
                         just(LogosToken::ThreeDots)
                             .or_not()
-                            .map(|v| return v.is_some()),
+                            .map(|v| v.is_some()),
                     ),
             )
             .then_ignore(just(LogosToken::RParen))
@@ -496,4 +500,3 @@ where
     .repeated()
     .collect::<Vec<Expr>>()
 }
-
