@@ -36,6 +36,7 @@ impl Analyzer {
             scopes: vec![HashMap::new()],
         }
     }
+
     pub fn analyze(&mut self) -> bool {
         for node in self.ast.clone() {
             self.check(node);
@@ -44,8 +45,10 @@ impl Analyzer {
         for error in &self.errors {
             println!("{:?}", error)
         }
+
         self.errors.is_empty()
     }
+
     fn check(&mut self, ast: Expr) {
         match ast.inner {
             ExprKind::Ident(ident) => {
@@ -56,9 +59,11 @@ impl Analyzer {
                     );
                 }
             }
+
             ExprKind::Unary(_, x) => {
                 self.check(*x);
             }
+
             ExprKind::Mod(x, b) => {
                 self.check_module(x.clone(), b, x);
             }
@@ -78,6 +83,7 @@ impl Analyzer {
                     self.end_scope();
                 }
             }
+
             ExprKind::ExternFunction(name, params, _, is_var) => {
                 let ty = if is_var {
                     ScopeVal::FunctionVariadic
@@ -86,8 +92,9 @@ impl Analyzer {
                 };
                 self.scopes.last_mut().unwrap().insert(name, ty);
             }
+
             ExprKind::FunctionCall(mod_name, name, params) => {
-                let name = if mod_name.is_some() && mod_name.as_ref().unwrap().len() > 0 {
+                let name = if mod_name.is_some() && !mod_name.as_ref().unwrap().is_empty() {
                     format!(
                         "{}::{}",
                         mod_name
@@ -124,6 +131,7 @@ impl Analyzer {
                     self.basic_err("Function not found".into(), ast.span)
                 }
             }
+
             ExprKind::Function(name, params, _, block) => {
                 self.scopes
                     .last_mut()
@@ -144,6 +152,7 @@ impl Analyzer {
                 self.in_func -= 1;
                 self.end_scope();
             }
+
             ExprKind::Let(name, _, expr) => {
                 self.scopes
                     .last_mut()
@@ -153,6 +162,7 @@ impl Analyzer {
                     self.check(e)
                 }
             }
+
             ExprKind::Return(expr) => {
                 if self.in_func < 1 {
                     self.basic_err("Cannot return outside a function".into(), ast.span)
@@ -161,6 +171,7 @@ impl Analyzer {
                     self.check(e)
                 }
             }
+
             ExprKind::Binary(lhs, _, rhs) => {
                 self.check(*lhs);
                 self.check(*rhs);
@@ -176,27 +187,32 @@ impl Analyzer {
             .find_map(|map| map.get(&ident))
             .cloned()
     }
+
     fn start_scope(&mut self) {
         self.scopes.push(HashMap::new());
     }
+
     fn end_scope(&mut self) {
         self.scopes.pop();
     }
+
     fn check_module(&mut self, name: String, items: Option<Vec<Expr>>, first: String) {
-        if items.is_some() {
+        if let Some(items) = items {
             self.start_scope();
-            for item in items.unwrap().into_iter() {
+            for item in items.into_iter() {
                 match item.inner.clone() {
                     ExprKind::Mod(m, x) => {
                         self.modules.push(m.to_owned());
                         self.check_module(m.clone(), x, format!("{}::{}", first.clone(), m));
                     }
+
                     ExprKind::Function(name, params, _, _) => {
                         self.scopes
                             .last_mut()
                             .unwrap()
                             .insert(name, ScopeVal::Function(params.len()));
                     }
+
                     ExprKind::Let(v_name, _, _) => self.basic_err(
                         "Variables are not allowed inside modules, use constants instead!"
                             .to_owned(),
@@ -205,6 +221,7 @@ impl Analyzer {
                     _ => self.check(item),
                 }
             }
+
             let map = self.scopes.clone();
 
             self.end_scope();
@@ -246,21 +263,25 @@ impl Analyzer {
                                         self.modules.push(m.to_owned());
                                         self.check_module(m.clone(), x, format!("{}::{}", first.clone(), m));
                                     }
+
                                     ExprKind::Function(name, params, _, _) => {
                                         self.scopes
                                             .last_mut()
                                             .unwrap()
                                             .insert(name, ScopeVal::Function(params.len()));
                                     }
+
                                     ExprKind::Let(v_name, _, _) => self.basic_err(
                                         "Variables are not allowed inside modules, use constants instead!"
                                             .to_owned(),
                                         node.span,
                                     ),
+
                                     _ => self.check(node),
                                 }
                             }
                         };
+
                         let map = self.scopes.clone();
 
                         self.end_scope();
@@ -292,6 +313,7 @@ impl Analyzer {
             };
         }
     }
+
     fn basic_err(&mut self, message: String, span: Range<usize>) {
         self.errors.push(
             miette!(

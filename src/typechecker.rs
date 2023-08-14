@@ -2,12 +2,14 @@ use miette::{miette, LabeledSpan, Report};
 use std::{collections::HashMap, ops::Range};
 
 use crate::parser::{Expr, ExprKind, UnaryOp};
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct FunctionLike {
     pub parameters: Vec<TypeForm>,
     pub return_type: Box<Option<TypeForm>>,
     pub is_variadic: bool,
 }
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum TypeForm {
     Int,
@@ -24,6 +26,7 @@ pub struct TypeChecker {
     errors: Vec<Report>,
     source: String,
 }
+
 impl TypeChecker {
     pub fn new(ast: Vec<Expr>, source: &str) -> Self {
         Self {
@@ -33,15 +36,19 @@ impl TypeChecker {
             scopes: vec![HashMap::new()],
         }
     }
+
     pub fn typecheck(&mut self) -> bool {
         for node in self.ast.clone() {
             self.check(node);
         }
+
         for error in &self.errors {
             println!("{:?}", error)
         }
+
         self.errors.is_empty()
     }
+
     fn check(&mut self, node: Expr) -> Option<TypeForm> {
         match node.clone().inner {
             ExprKind::Let(name, ty, value) => {
@@ -64,6 +71,7 @@ impl TypeChecker {
                 }
                 None
             }
+
             ExprKind::Unary(op, expr) => {
                 let expr_ty = self.check(*expr.clone());
                 match op {
@@ -81,6 +89,7 @@ impl TypeChecker {
                     }
                 }
             }
+
             ExprKind::Bool(_) => Some(TypeForm::Bool),
             ExprKind::Float(_) => Some(TypeForm::Float),
             ExprKind::String(_) => Some(TypeForm::String),
@@ -100,6 +109,7 @@ impl TypeChecker {
                         )
                     }
                 }
+
                 let mut return_type: Option<TypeForm> = None;
                 if let Some(ret) = ret_type {
                     if let Some(ret_ty) = self.get_type(&ret) {
@@ -111,6 +121,7 @@ impl TypeChecker {
                         )
                     }
                 }
+
                 let func_sig = FunctionLike {
                     parameters: params_ty_noname,
                     return_type: Box::new(return_type.clone()),
@@ -129,6 +140,7 @@ impl TypeChecker {
                 {
                     self.scopes.last_mut().unwrap().insert(name, ty);
                 }
+
                 let mut found = false;
                 for (index, node) in stmts.clone().iter().enumerate() {
                     match node.clone().inner {
@@ -149,6 +161,7 @@ impl TypeChecker {
                                     );
                                 }
                             }
+
                             if index != stmts.len() - 1 && success {
                                 let span =
                                     stmts[index + 1].span.start..stmts[stmts.len() - 1].span.end;
@@ -168,6 +181,7 @@ impl TypeChecker {
                         }
                     }
                 }
+
                 if !found && return_type.is_some() {
                     self.basic_err(
                         format!(
@@ -181,15 +195,18 @@ impl TypeChecker {
                 self.end_scope();
                 None
             }
+
             ExprKind::If(condition, block, else_block) => {
                 let ty = self.check(*condition.clone());
                 if ty != Some(TypeForm::Bool) {
                     self.basic_err("Expected condition to be boolean".into(), condition.span)
                 }
+
                 self.start_scope();
                 for e in block {
                     self.check(e);
                 }
+
                 self.end_scope();
                 if let Some(block) = else_block {
                     self.start_scope();
@@ -198,8 +215,10 @@ impl TypeChecker {
                     }
                     self.end_scope();
                 }
+
                 None
             }
+
             ExprKind::ExternFunction(name, types, ret_type, is_var) => {
                 let mut tys: Vec<TypeForm> = Vec::new();
                 let mut fails = false;
@@ -211,6 +230,7 @@ impl TypeChecker {
                         fails = true;
                     }
                 }
+
                 let mut return_type: Option<TypeForm> = None;
                 if let Some(ret) = ret_type {
                     if let Some(ret_ty) = self.get_type(&ret) {
@@ -222,9 +242,11 @@ impl TypeChecker {
                         )
                     }
                 }
+
                 if fails {
                     self.basic_err("Invalid function parameters.".into(), node.span.clone())
                 }
+
                 self.scopes.last_mut().unwrap().insert(
                     name,
                     TypeForm::Function(FunctionLike {
@@ -233,8 +255,10 @@ impl TypeChecker {
                         is_variadic: is_var,
                     }),
                 );
+
                 None
             }
+
             ExprKind::FunctionCall(_mod_name, name, args) => match self.get(name) {
                 Some(v) => {
                     if let TypeForm::Function(f) = v {
@@ -272,10 +296,13 @@ impl TypeChecker {
                         }
                         return *f.return_type;
                     }
+
                     unreachable!()
                 }
-                None => return None,
+
+                None => None,
             },
+
             ExprKind::Ident(name) => return self.get(name),
             ExprKind::Binary(lhs, op, rhs) => {
                 let lhs_ty = self.check(*lhs.clone());
@@ -291,6 +318,7 @@ impl TypeChecker {
                                         lhs_ty.unwrap_or(TypeForm::Void)
                                     )
                                 ),
+
                                 LabeledSpan::at(
                                     rhs.span,
                                     format!(
@@ -304,8 +332,10 @@ impl TypeChecker {
                         )
                         .with_source_code(self.source.clone()),
                     );
+
                     return None;
                 }
+
                 if op.is_comp() {
                     Some(TypeForm::Bool)
                 } else {
@@ -317,12 +347,15 @@ impl TypeChecker {
                             node.span,
                         )
                     }
+
                     lhs_ty
                 }
             }
-            _ => return None,
+
+            _ => None,
         }
     }
+
     fn get_type(&self, name: &str) -> Option<TypeForm> {
         Some(match name {
             "int" => TypeForm::Int,
@@ -340,12 +373,15 @@ impl TypeChecker {
             .find_map(|map| map.get(&ident))
             .cloned()
     }
+
     fn start_scope(&mut self) {
         self.scopes.push(HashMap::new());
     }
+
     fn end_scope(&mut self) {
         self.scopes.pop();
     }
+
     fn basic_err(&mut self, message: String, span: Range<usize>) {
         self.errors.push(
             miette!(labels = vec![LabeledSpan::at(span, message)], "Type Error")
