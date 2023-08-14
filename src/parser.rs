@@ -86,6 +86,8 @@ pub enum LogosToken<'a> {
     Ident(&'a str),
     #[token("let")]
     KwLet,
+    #[token("let")]
+    KwConst,
     #[token("if")]
     KwIf,
     #[token("else")]
@@ -122,6 +124,7 @@ impl<'a> fmt::Display for LogosToken<'a> {
             LogosToken::Eqq => write!(f, "=="),
             LogosToken::Arrow => write!(f, "->"),
             LogosToken::KwLet => write!(f, "let"),
+            LogosToken::KwLet => write!(f, "const"),
             LogosToken::KwElse => write!(f, "else"),
             LogosToken::KwIf => write!(f, "if"),
             LogosToken::KwMod => write!(f, "mod"),
@@ -153,11 +156,13 @@ impl<'a> fmt::Display for LogosToken<'a> {
         }
     }
 }
+
 #[derive(Debug, Clone)]
 pub struct Expr {
     pub span: Range<usize>,
     pub inner: ExprKind,
 }
+
 impl Expr {
     pub fn new(span: Range<usize>, inner: ExprKind) -> Self {
         Expr { inner, span }
@@ -174,6 +179,7 @@ pub enum ExprKind {
     Binary(Box<Expr>, BinaryOp, Box<Expr>),
     Unary(UnaryOp, Box<Expr>),
     Let(String, String, Box<Option<Expr>>),
+    Const(String, String, Box<Option<Expr>>),
     FunctionCall(Option<Vec<String>>, String, Vec<Expr>),
     Function(String, Vec<(String, String)>, Option<String>, Vec<Expr>),
     If(Box<Expr>, Vec<Expr>, Option<Vec<Expr>>), // IF <condition> <block> (else <block>)?
@@ -183,12 +189,14 @@ pub enum ExprKind {
     Mod(String, Option<Vec<Expr>>),
     Assignment(String, Box<Expr>),
 }
+
 #[derive(Debug, Clone)]
 pub enum UnaryOp {
     Not,
     Neg,
     Pos,
 }
+
 #[derive(Debug, Clone)]
 pub enum BinaryOp {
     Mul,
@@ -205,6 +213,7 @@ pub enum BinaryOp {
     And,
     Mod,
 }
+
 impl BinaryOp {
     pub fn is_comp(self) -> bool {
         match self {
@@ -398,6 +407,20 @@ where
                     ExprKind::Let(ident.to_string(), ty.to_string(), Box::new(rhs)),
                 )
             });
+
+        let const_expr = just(LogosToken::KwConst)
+            .ignore_then(ident)
+            .then_ignore(just(LogosToken::Colon))
+            .then(ident)
+            .then(just(LogosToken::Eq).ignore_then(inline.clone()).or_not())
+            .map_with_span(|a, span: Span| (a, span))
+            .map(|(((ident, ty), rhs), span)| {
+                Expr::new(
+                    span.into(),
+                    ExprKind::Const(ident.to_string(), ty.to_string(), Box::new(rhs)),
+                )
+            });
+
         let function = just(LogosToken::KwFn)
             .ignore_then(ident)
             .then(
