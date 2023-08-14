@@ -51,7 +51,7 @@ impl TypeChecker {
 
     fn check(&mut self, node: Expr) -> Option<TypeForm> {
         match node.clone().inner {
-            ExprKind::Let(name, ty, value) => {
+            ExprKind::Let(name, ty, value) | ExprKind::Const(name, ty, value) => {
                 let ty = self.get_type(&ty);
                 match ty {
                     Some(ty) => {

@@ -153,7 +153,7 @@ impl Analyzer {
                 self.end_scope();
             }
 
-            ExprKind::Let(name, _, expr) => {
+            ExprKind::Let(name, _, expr) | ExprKind::Const(name, _, expr) => {
                 self.scopes
                     .last_mut()
                     .unwrap()
@@ -218,6 +218,7 @@ impl Analyzer {
                             .to_owned(),
                         item.span,
                     ),
+
                     _ => self.check(item),
                 }
             }
