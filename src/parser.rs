@@ -476,11 +476,7 @@ where
                     .separated_by(just(LogosToken::Comma))
                     .allow_trailing()
                     .collect::<Vec<_>>()
-                    .then(
-                        just(LogosToken::ThreeDots)
-                            .or_not()
-                            .map(|v| v.is_some()),
-                    ),
+                    .then(just(LogosToken::ThreeDots).or_not().map(|v| v.is_some())),
             )
             .then_ignore(just(LogosToken::RParen))
             .then(just(LogosToken::Arrow).ignore_then(ident).or_not())
@@ -512,6 +508,7 @@ where
         function
             .or(extern_fn)
             .or(mod_expr)
+            .or(const_expr)
             .or(while_loop)
             .or(return_expr)
             .or(assignment)
