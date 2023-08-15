@@ -86,7 +86,7 @@ pub enum LogosToken<'a> {
     Ident(&'a str),
     #[token("let")]
     KwLet,
-    #[token("let")]
+    #[token("const")]
     KwConst,
     #[token("if")]
     KwIf,
@@ -123,8 +123,8 @@ impl<'a> fmt::Display for LogosToken<'a> {
             LogosToken::Eq => write!(f, "="),
             LogosToken::Eqq => write!(f, "=="),
             LogosToken::Arrow => write!(f, "->"),
+            LogosToken::KwConst => write!(f, "const"),
             LogosToken::KwLet => write!(f, "let"),
-            LogosToken::KwLet => write!(f, "const"),
             LogosToken::KwElse => write!(f, "else"),
             LogosToken::KwIf => write!(f, "if"),
             LogosToken::KwMod => write!(f, "mod"),
