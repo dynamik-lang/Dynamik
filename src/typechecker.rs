@@ -144,6 +144,34 @@ impl TypeChecker {
                 let mut found = false;
                 for (index, node) in stmts.clone().iter().enumerate() {
                     match node.clone().inner {
+                        ExprKind::If(_, v, else_) => {
+                            for e in v {
+                                match e.inner {
+                                    ExprKind::Return(real_ty) => {
+                                        found = true;
+                                        let mut success = true;
+                                        if let Some(ty_) = *real_ty {
+                                            let ty = self.check(ty_.clone());
+                                            if ty != return_type {
+                                                success = false;
+                                                self.basic_err(
+                                                    format!(
+                                                        "Expected type {:?} found type {:?}",
+                                                        return_type.clone().unwrap_or(TypeForm::Void),
+                                                        ty.unwrap_or(TypeForm::Void)
+                                                    ),
+                                                    ty_.span,
+                                                );
+                                            }
+                                        }
+                                        if else_.is_none() {
+                                            self.basic_err("Expected else after if statement".into(), node.span.clone())
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
                         ExprKind::Return(real_ty) => {
                             found = true;
                             let mut success = true;
@@ -162,18 +190,18 @@ impl TypeChecker {
                                 }
                             }
 
-                            if index != stmts.len() - 1 && success {
-                                let span =
-                                    stmts[index + 1].span.start..stmts[stmts.len() - 1].span.end;
-                                println!("{:?}", miette!(
-                                    severity = miette::Severity::Warning,
-                                    labels = vec![
-                                        LabeledSpan::at(span, "Unreachable code".to_owned())
-                                    ],
-                                    help = "Just delete that code lol, the compiler will automatically ignore it..",
-                                    " Warning: Unreachable code"
-                                ).with_source_code(self.source.clone()));
-                            }
+                            // if index != stmts.len() - 1 && success {
+                            //     let span =
+                            //         stmts[index + 1].span.start..stmts[stmts.len() - 1].span.end;
+                            //     println!("{:?}", miette!(
+                            //         severity = miette::Severity::Warning,
+                            //         labels = vec![
+                            //             LabeledSpan::at(span, "Unreachable code".to_owned())
+                            //         ],
+                            //         help = "Just delete that code lol, the compiler will automatically ignore it..",
+                            //         " Warning: Unreachable code"
+                            //     ).with_source_code(self.source.clone()));
+                            // }
                             break;
                         }
                         _ => {
