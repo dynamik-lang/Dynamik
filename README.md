@@ -118,7 +118,7 @@ Dynamik supports the following basic math operators:
 You can define functions in Dynamik using the following syntax:
 
 ```dynamik
-let print_hello() {
+fn print_hello() {
     printf("Hello World");
 }
 ```
@@ -126,7 +126,7 @@ let print_hello() {
 Functions can also accept arguments:
 
 ```dynamik
-let add(v1: int, v2: int) -> int {
+fn add(v1: int, v2: int) -> int {
     return v1 + v2;
 }
 ```
@@ -137,8 +137,8 @@ In the above example, the `add` function takes two `int` arguments and returns a
 Dynamik allows you to use external functions from the C library. To use an external function, you can declare it as follows:
 
 ```dynamik
-extern "C" let puts(string) -> int;
-extern "C" let printf(string, ...) -> int;
+extern "C" fn puts(string) -> int;
+extern "C" fn printf(string, ...) -> int;
 ```
 
 The `...` at the end indicates that the function can accept a variable number of arguments, making it variadic.
@@ -178,7 +178,7 @@ Dynamik allows you to create modules to organize your code and create namespaces
 
 ```dynamik
 mod math {
-    let add(v1: int, v2: int) -> int {
+    fn add(v1: int, v2: int) -> int {
         return v1 + v2;
     }
 }
