@@ -2,6 +2,12 @@
 name = "dynamik"
 version = "0.1.0"
 edition = "2021"
+authors = ["Pranjal Patel <pranjalpatel@duck.com>", "Hamza <hamzaoubrahim51@gmail.com>"]
+description = "A fast, powerful, expressive and typesafe language."
+repository = "https://github.com/dynamik-lang/Dynamik"
+license = "GPL-3.0-only"
+readme = "README.md"
+categories = ["programming-language"]
 
 [dependencies]
 ariadne = "0.3.0"
